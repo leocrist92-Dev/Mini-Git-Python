@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import re
+from Aplicacion.Controller.facade import MiniGitFacade
+
 
 class MainApp(tk.Tk):
     def __init__(self):
@@ -26,6 +28,19 @@ class MainApp(tk.Tk):
         
         self.configure(bg=self.colors["bg"])
         self.eval('tk::PlaceWindow . center')
+
+        # Instanciación Dinámica de la Fachada Real o Fallback
+        if MiniGitFacade is not None:
+            try:
+                self.facade = MiniGitFacade()
+            except Exception as e:
+                print(f"Advertencia al conectar Facade real: {e}.")
+        else:
+            print(f"No hay Facade")
+
+        # Estado Global de Sesión y Contexto de Aplicación
+        self.usuario_actual = None
+        self.proyecto_actual = None
         
         self.setup_styles()
         
@@ -45,6 +60,12 @@ class MainApp(tk.Tk):
             frame.grid(row=0, column=0, sticky="nsew")
             
         self.show_frame("HU001_Login")
+
+        def set_usuario_actual(self, usuario):
+            self.usuario_actual = usuario
+    
+        def set_proyecto_actual(self, proyecto):
+            self.proyecto_actual = proyecto
 
     def setup_styles(self):
         style = ttk.Style()
@@ -264,7 +285,25 @@ class HU002_Registro(BaseFrame):
             self.reg_btn.config(state="disabled")
             
     def register(self):
-        self.show_toast("✓ Cuenta creada. Se envió correo de confirmación.", "success")
+        nombre = self.inputs["Nombre Completo"].get().strip()
+        email = self.inputs["Email"].get().strip()
+        usuario = self.inputs["Usuario"].get().strip()
+        password = self.inputs["Contraseña"].get().strip()
+
+        # Invocación a Facade: registrar_usuario(nombre, correo, password)
+        try:
+            res = self.controller.facade.registrar(nombre, email, usuario, password)
+            if res:
+                self.show_toast("✓ Cuenta creada con éxito en la base de datos.", "success")
+                for ent in self.inputs.values(): ent.delete(0, 'end')
+                for lbl in self.helps.values(): lbl.config(text="")
+                self.terms_var.set(False)
+                self.controller.show_frame("HU001_Login")
+            else:
+                self.show_toast("✗ No se pudo registrar la cuenta.", "error")
+        except Exception as e:
+            self.show_toast(f"Error al registrar usuario: {e}", "error")
+        #self.show_toast("✓ Cuenta creada. Se envió correo de confirmación.", "success")
         for ent in self.inputs.values(): ent.delete(0, 'end')
         for lbl in self.helps.values(): lbl.config(text="")
         self.terms_var.set(False)
