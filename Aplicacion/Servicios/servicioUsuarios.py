@@ -12,6 +12,10 @@ class ServicioUsuarios:
 
     def autenticar(self, correo, password):
         usuario = self.dao.obtener_usuario_por_correo(correo)
+        if not usuario:
+            usuario = self.dao.obtener_usuario_por_nombre(correo)
+        if not usuario:
+            usuario = self.dao.obtener_usuario_por_nombre_usuario(correo)
         
         if not usuario:
             return None

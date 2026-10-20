@@ -1,7 +1,8 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import re
 from Aplicacion.Controller.facade import MiniGitFacade
+from Dominio.proyecto import Proyecto
 
 
 class MainApp(tk.Tk):
@@ -29,14 +30,8 @@ class MainApp(tk.Tk):
         self.configure(bg=self.colors["bg"])
         self.eval('tk::PlaceWindow . center')
 
-        # Instanciación Dinámica de la Fachada Real o Fallback
-        if MiniGitFacade is not None:
-            try:
-                self.facade = MiniGitFacade()
-            except Exception as e:
-                print(f"Advertencia al conectar Facade real: {e}.")
-        else:
-            print(f"No hay Facade")
+        # Instanciación Dinámica de la Fachada Real
+        self.facade = MiniGitFacade()
 
         # Estado Global de Sesión y Contexto de Aplicación
         self.usuario_actual = None
@@ -61,10 +56,10 @@ class MainApp(tk.Tk):
             
         self.show_frame("HU001_Login")
 
-        def set_usuario_actual(self, usuario):
+    def set_usuario_actual(self, usuario):
             self.usuario_actual = usuario
     
-        def set_proyecto_actual(self, proyecto):
+    def set_proyecto_actual(self, proyecto):
             self.proyecto_actual = proyecto
 
     def setup_styles(self):
@@ -119,6 +114,9 @@ class MainApp(tk.Tk):
     def show_frame(self, page_name):
         frame = self.frames[page_name]
         frame.tkraise()
+        # Si la vista tiene un método on_show, se ejecuta cada vez que se muestra la pantalla
+        if hasattr(frame, "on_show") and callable(getattr(frame, "on_show")):
+            frame.on_show()
 
 class BaseFrame(ttk.Frame):
     def __init__(self, parent, controller):
@@ -166,6 +164,33 @@ class BaseFrame(ttk.Frame):
             btn = ttk.Button(nav_frame, text=text, style='Secondary.TButton', command=lambda f=frame_name: self.controller.show_frame(f))
             btn.pack(side="left", padx=2)
 
+def formatear_fecha_relativa(fecha_val):
+    if not fecha_val:
+        return "Sin registros"
+    import datetime
+    if isinstance(fecha_val, str):
+        try:
+            fecha_val = datetime.datetime.strptime(fecha_val, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(fecha_val)
+    if isinstance(fecha_val, (datetime.datetime, datetime.date)):
+        if isinstance(fecha_val, datetime.date) and not isinstance(fecha_val, datetime.datetime):
+            fecha_val = datetime.datetime.combine(fecha_val, datetime.time.min)
+        ahora = datetime.datetime.now()
+        diff = ahora - fecha_val
+        seg = diff.total_seconds()
+        if seg < 60:
+            return "Hace un momento"
+        elif seg < 3600:
+            return f"Hace {int(seg // 60)} min"
+        elif seg < 86400:
+            return f"Hace {int(seg // 3600)} h"
+        elif seg < 2592000:
+            return f"Hace {int(seg // 86400)} d"
+        else:
+            return fecha_val.strftime("%Y-%m-%d")
+    return str(fecha_val)
+
 class HU001_Login(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
@@ -201,20 +226,28 @@ class HU001_Login(BaseFrame):
             self.login_btn.config(state="disabled")
             
     def do_login(self):
+        correo = self.user_input.get().strip()
+        password = self.pass_input.get().strip()
+        
         self.login_btn.config(text="Verificando...", state="disabled")
         self.show_toast("Validando credenciales contra el servicio de autenticación...", "info")
-        self.after(1600, self.validate_login)
         
-    def validate_login(self):
-        if self.pass_input.get() == "ContraseñaIncorrecta":
-            self.show_toast("✗ Usuario o contraseña inválida.", "error")
+        try:
+            # Llamada directa al método de autenticación del Facade
+            usuario = self.controller.facade.autenticar(correo, password)
+            if usuario:
+                self.controller.set_usuario_actual(usuario)
+                self.show_toast("✓ Inicio de sesión exitoso.", "success")
+                self.user_input.delete(0, "end")
+                self.pass_input.delete(0, "end")
+                self.login_btn.config(text="Ingresar")
+                self.controller.show_frame("HU009_ListarRepositorios")
+            else:
+                self.show_toast("✗ Credenciales inválidas.", "error")
+                self.login_btn.config(text="Ingresar", state="normal")
+        except Exception as e:
+            self.show_toast(f"Error al autenticar: {e}", "error")
             self.login_btn.config(text="Ingresar", state="normal")
-        else:
-            self.show_toast("✓ Login exitoso.", "success")
-            self.user_input.delete(0, 'end')
-            self.pass_input.delete(0, 'end')
-            self.login_btn.config(text="Ingresar")
-            self.controller.show_frame("HU009_ListarRepositorios")
             
     def recover_pass(self):
         self.show_toast("✓ Enlace enviado. Revisa tu bandeja de entrada.", "success")
@@ -312,7 +345,17 @@ class HU009_ListarRepositorios(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
         self.build_nav()
-        
+        self.repos = []
+        self.filtered_repos = []
+        self.search_var = tk.StringVar()
+        self.filter_vis_var = tk.StringVar(value="Todos")
+
+    def on_show(self):
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        self.build_nav()
+
         content = ttk.Frame(self, style='App.TFrame', padding=20)
         content.pack(fill="both", expand=True)
         
@@ -320,16 +363,36 @@ class HU009_ListarRepositorios(BaseFrame):
         top_bar = ttk.Frame(content, style='App.TFrame')
         top_bar.pack(fill="x", pady=(0, 10))
         ttk.Label(top_bar, text="Mis Repositorios", style='Title.TLabel').pack(side="left")
-        ttk.Button(top_bar, text="+ Nuevo Repositorio", style='Primary.TButton', command=lambda: controller.show_frame("HU003_CrearRepo")).pack(side="right")
-        
+        ttk.Button(top_bar, text="+ Nuevo Repositorio", style='Primary.TButton', command=lambda: self.controller.show_frame("HU003_CrearRepo")).pack(side="right")
+
+        user_id = (
+            self.controller.usuario_actual["id"]
+            if isinstance(self.controller.usuario_actual, dict)
+            else (self.controller.usuario_actual.id if self.controller.usuario_actual else 1)
+        )
+        try:
+            self.repos = self.controller.facade.listar_proyectos_usuario(user_id)
+            total_commits = self.controller.facade.contar_commits_totales_usuario(user_id)
+        except Exception as e:
+            self.show_toast(f"Error cargando repositorios: {e}", "error")
+            self.repos = []
+            total_commits = 0
+
+        # Estadísticas basadas en objetos Proyecto
+        total_repos = len(self.repos)
+        privados = sum(1 for r in self.repos if r.visibilidad.lower() == "privado")
+        publicos = total_repos - privados
+
         stats_frame = ttk.Frame(content, style='App.TFrame')
         stats_frame.pack(fill="x", pady=(0, 20))
-        
-        stats = [("Total Repos", "12", self.controller.colors["blue"]), 
-                 ("Privados", "8", self.controller.colors["purple"]), 
-                 ("Públicos", "4", self.controller.colors["ok"]), 
-                 ("Commits Totales", "1,245", self.controller.colors["cyan"])]
-                 
+
+        stats = [
+            ("Total Repos", str(total_repos), self.controller.colors["blue"]), 
+                 ("Privados", str(privados), self.controller.colors["purple"]), 
+                 ("Públicos", str(publicos), self.controller.colors["ok"]),
+                 ("Commits Totales", str(total_commits), self.controller.colors["cyan"])
+        ]
+
         for title, val, color in stats:
             card = ttk.Frame(stats_frame, style='Panel.TFrame')
             card.pack(side="left", fill="x", expand=True, padx=5, ipady=10)
@@ -338,15 +401,26 @@ class HU009_ListarRepositorios(BaseFrame):
         
         filters = ttk.Frame(content, style='App.TFrame')
         filters.pack(fill="x", pady=(0, 15))
-        
-        self.search = ttk.Entry(filters, font=("Segoe UI", 10))
+
+        # Buscador por texto
+        ttk.Label(
+            filters,
+            text="Buscar repositorios:",
+            font=("Segoe UI", 9),
+            style='App.TLabel'
+            #foreground=self.controller.colors["fg"],
+        ).pack(side="left", padx=(15, 5))
+        self.search = ttk.Entry(filters, textvariable=self.search_var, font=("Segoe UI", 10))
         self.search.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self.search.insert(0, "Buscar repositorios...")
+        #self.search.insert(0, "Buscar repositorios...")
+        self.search.bind("<KeyRelease>", lambda e: self.apply_filters())
+        self.search.delete(0, "end")
         
         ttk.Label(filters, text="Privacidad:", style='App.TLabel').pack(side="left", padx=5)
-        self.privacy_filter = ttk.Combobox(filters, values=["Todos", "Público", "Privado"], state="readonly", width=10)
+        self.privacy_filter = ttk.Combobox(filters, textvariable=self.filter_vis_var, values=["Todos", "Público", "Privado"], state="readonly", width=10)
         self.privacy_filter.current(0)
         self.privacy_filter.pack(side="left", padx=5)
+        self.privacy_filter.bind("<<ComboboxSelected>>", lambda e: self.apply_filters())
         
         ttk.Button(filters, text="Tarjetas", style='Secondary.TButton', command=self.show_cards).pack(side="left", padx=2)
         ttk.Button(filters, text="Tabla", style='Secondary.TButton', command=self.show_table).pack(side="left", padx=2)
@@ -354,19 +428,83 @@ class HU009_ListarRepositorios(BaseFrame):
         # Contenedores de Vistas
         self.cards_frame = ttk.Frame(content, style='App.TFrame')
         self.table_frame = ttk.Frame(content, style='App.TFrame')
-        
-        self.repos = [("mi-proyecto-python", "Público", "Python", "Hace 2 horas"), 
-                      ("api-backend", "Privado", "JavaScript", "Ayer"), 
-                      ("portafolio-web", "Público", "HTML/CSS", "Hace 3 días")]
-        
+
+        #self.build_cards()
+        #self.build_table()
+        self.apply_filters()
+        self.show_cards()
+
+    def apply_filters(self):
+        """Filtra la lista de repositorios según el término de búsqueda y la visibilidad."""
+        search_text = self.search_var.get().strip().lower()
+        selected_vis = self.filter_vis_var.get()
+
+        self.filtered_repos = []
+        for repo in self.repos:
+            nombre = str(repo.nombre).lower()
+            descripcion = str(repo.descripcion).lower()
+            visibilidad = str(repo.visibilidad)
+
+            coincide_texto = (search_text in nombre) or (search_text in descripcion)
+            coincide_vis = (selected_vis == "Todos") or (visibilidad.lower() == selected_vis.lower())
+
+            if coincide_texto and coincide_vis:
+                self.filtered_repos.append(repo)
+
         self.build_cards()
         self.build_table()
-        self.show_cards()
 
     def build_cards(self):
         for widget in self.cards_frame.winfo_children(): widget.destroy()
-        for name, priv, lang, time in self.repos:
-            card = ttk.Frame(self.cards_frame, style='Panel.TFrame')
+
+        if not self.filtered_repos:
+            ttk.Label(
+                self.cards_frame,
+                text="No se encontraron repositorios que coincidan con los filtros.",
+                font=("Segoe UI", 10, "italic"),
+                foreground=self.controller.colors["muted"],
+            ).pack(pady=30)
+            return
+
+        # Contenedor con Canvas y Scrollbars (Horizontal y Vertical)
+        canvas = tk.Canvas(
+            self.cards_frame,
+            bg=self.controller.colors["bg"],
+            highlightthickness=0,
+            bd=0
+        )
+        v_scrollbar = ttk.Scrollbar(self.cards_frame, orient="vertical", command=canvas.yview)
+        h_scrollbar = ttk.Scrollbar(self.cards_frame, orient="horizontal", command=canvas.xview)
+
+        scrollable_frame = ttk.Frame(canvas, style="App.TFrame")
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
+
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar.pack(side="bottom", fill="x")
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # Iteración sobre las instancias de la clase Proyecto
+        #for repo in self.repos:
+        for repo in self.filtered_repos:
+            r_id = repo.id
+            name = repo.nombre
+            priv = repo.visibilidad
+            desc = repo.descripcion
+            date = repo.fecha_creacion
+            ruta = repo.ruta
+
+            # Consultas a Facade
+            lenguaje = self.controller.facade.obtener_lenguaje_proyecto(r_id, ruta)
+            u_fecha = self.controller.facade.obtener_ultima_actualizacion(r_id, date)
+            u_fecha_str = formatear_fecha_relativa(u_fecha)
+
+            card = ttk.Frame(scrollable_frame, style='Panel.TFrame')
             card.pack(fill="x", pady=5, ipady=10, ipadx=10)
             
             # Info izquierda
@@ -374,22 +512,116 @@ class HU009_ListarRepositorios(BaseFrame):
             info_frame.pack(side="left", fill="y")
             ttk.Label(info_frame, text=name, font=("Segoe UI", 12, "bold"), foreground=self.controller.colors["blue"], background=self.controller.colors["panel"]).pack(side="left", padx=(0, 10))
             ttk.Label(info_frame, text=priv, style='Chip.TLabel').pack(side="left", padx=5)
-            ttk.Label(info_frame, text=lang, style='Panel.TLabel').pack(side="left", padx=5)
-            ttk.Label(info_frame, text=time, style='Help.TLabel').pack(side="left", padx=10)
+            ttk.Label(info_frame, text=desc, style='Panel.TLabel').pack(side="left", padx=5)
+            ttk.Label(info_frame, text=date, style='Help.TLabel').pack(side="left", padx=10)
             
             # Botones derecha
             action_frame = ttk.Frame(card, style='Panel.TFrame')
             action_frame.pack(side="right")
-            ttk.Button(action_frame, text="Commits", style='Secondary.TButton', command=lambda: self.controller.show_frame("HU005_Historial")).pack(side="left", padx=2)
-            ttk.Button(action_frame, text="Ramas", style='Secondary.TButton', command=lambda: self.controller.show_frame("HU007_Ramas")).pack(side="left", padx=2)
-            ttk.Button(action_frame, text="Eliminar", style='Danger.TButton', command=lambda: self.controller.show_frame("HU010_EliminarRepo")).pack(side="left", padx=2)
+            ttk.Button(action_frame, text="+ Commit", style='Secondary.TButton', command=lambda r=repo: self.ir_a_crear_commit(r)).pack(side="left", padx=2)
+            ttk.Button(action_frame, text="Commits", style='Secondary.TButton', command=lambda r=repo: self.ir_a_historial(r)).pack(side="left", padx=2)
+            ttk.Button(action_frame, text="Ramas", style='Secondary.TButton', command=lambda r=repo: self.ir_a_ramas(r)).pack(side="left", padx=2)
+            ttk.Button(action_frame, text="Eliminar", style='Danger.TButton', command=lambda r=repo: self.ir_a_eliminar_repo(r)).pack(side="left", padx=2)
+
+            # Detalles del repositorio
+            details = ttk.Frame(card, style="Panel.TFrame")
+            details.pack(fill="x", pady=(8, 0))
+
+            ttk.Label(
+                details,
+                text=f"• Lenguaje: {lenguaje}",
+                font=("Segoe UI", 9),
+                foreground=self.controller.colors["purple"],
+                background=self.controller.colors["panel"],
+            ).pack(side="left", padx=(0, 15))
+
+            ttk.Label(
+                details,
+                text=f"Actualizado: {u_fecha_str}",
+                font=("Segoe UI", 9),
+                foreground=self.controller.colors["muted"],
+                background=self.controller.colors["panel"],
+            ).pack(side="left")
 
     def build_table(self):
-        cols = ("Nombre", "Privacidad", "Lenguaje", "Actualizado")
-        self.tree = ttk.Treeview(self.table_frame, columns=cols, show="headings", height=8)
-        for col in cols: self.tree.heading(col, text=col)
-        for row in self.repos: self.tree.insert("", "end", values=row)
-        self.tree.pack(fill="both", expand=True)
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+
+        if not self.repos:
+            ttk.Label(
+                self.table_frame,
+                text="No tienes repositorios creados aún. Haz clic en '+ Nuevo Repositorio' para comenzar.",
+                font=("Segoe UI", 10, "italic"),
+                foreground=self.controller.colors["muted"],
+            ).pack(pady=30)
+            return
+
+        if not self.filtered_repos:
+            ttk.Label(
+                self.table_frame,
+                text="No se encontraron repositorios que coincidan con los filtros.",
+                font=("Segoe UI", 10, "italic"),
+                foreground=self.controller.colors["muted"],
+            ).pack(pady=30)
+            return
+            
+        columns = ("nombre", "visibilidad", "lenguaje", "actualizado")
+        tree = ttk.Treeview(self.table_frame, columns=columns, show="headings", height=8)
+        
+        tree.heading("nombre", text="Nombre")
+        tree.heading("visibilidad", text="Visibilidad")
+        tree.heading("lenguaje", text="Lenguaje")
+        tree.heading("actualizado", text="Última Actualización")
+        
+        tree.column("nombre", width=200)
+        tree.column("visibilidad", width=100)
+        tree.column("lenguaje", width=120)
+        tree.column("actualizado", width=180)
+        
+        #for repo in self.repos:
+        for repo in self.filtered_repos:
+            r_id = repo.id
+            nombre = repo.nombre
+            visibilidad = repo.visibilidad
+            ruta = repo.ruta
+            f_creacion = repo.fecha_creacion
+            
+            lenguaje = self.controller.facade.obtener_lenguaje_proyecto(r_id, ruta)
+            u_fecha = self.controller.facade.obtener_ultima_actualizacion(r_id, f_creacion)
+            u_fecha_str = formatear_fecha_relativa(u_fecha)
+            
+            tree.insert("", "end", values=(nombre, visibilidad, lenguaje, u_fecha_str))
+            
+        tree.pack(fill="both", expand=True)
+
+    def show_cards(self):
+        self.table_frame.pack_forget()
+        self.cards_frame.pack(fill="both", expand=True)
+
+    def show_table(self):
+        self.cards_frame.pack_forget()
+        self.table_frame.pack(fill="both", expand=True)
+
+    def ir_a_crear_commit(self, repo):
+        """Asigna el repositorio seleccionado al controlador y abre la vista de crear commit."""
+        self.controller.set_proyecto_actual(repo)
+        #self.show_toast(f"Proyecto seleccionado: {repo.nombre}", "info")
+        self.controller.show_frame("HU004_Commit")
+
+    def ir_a_historial(self, repo):
+        """Asigna el repositorio seleccionado al controlador y abre la vista de historial."""
+        self.controller.set_proyecto_actual(repo)
+        self.controller.show_frame("HU005_Historial")
+
+    def ir_a_ramas(self, repo):
+        """Asigna el repositorio seleccionado al controlador y abre la vista de ramas."""
+        self.controller.set_proyecto_actual(repo)
+        self.controller.show_frame("HU007_Ramas")
+
+    def ir_a_eliminar_repo(self, repo):
+        """Confirma y elimina un repositorio de la base de datos y disco."""
+        self.controller.set_proyecto_actual(repo)
+        self.controller.show_frame("HU010_EliminarRepo")
 
     def show_cards(self):
         self.table_frame.pack_forget()
@@ -420,6 +652,24 @@ class HU003_CrearRepo(BaseFrame):
         ttk.Label(box, text="Descripción (opcional)", style='Panel.TLabel').pack(anchor="w")
         self.desc_input = ttk.Entry(box, font=("Segoe UI", 11))
         self.desc_input.pack(fill="x", pady=(0, 15))
+
+        # Campo para Ruta del Proyecto
+        ttk.Label(box, text="Ruta del proyecto", style="Panel.TLabel").pack(
+            anchor="w"
+        )
+        path_frame = ttk.Frame(box, style="Panel.TFrame")
+        path_frame.pack(fill="x", pady=(0, 15))
+
+        self.path_input = ttk.Entry(path_frame, font=("Segoe UI", 11), state="readonly")
+        self.path_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.browse_btn = ttk.Button(
+            path_frame,
+            text="Examinar...",
+            style="Secondary.TButton",
+            command=self.browse_folder,
+        )
+        self.browse_btn.pack(side="right")
         
         # Opciones de Privacidad
         ttk.Label(box, text="Privacidad", font=("Segoe UI", 10, "bold"), background=self.controller.colors["panel"], foreground=self.controller.colors["text"]).pack(anchor="w")
@@ -444,6 +694,14 @@ class HU003_CrearRepo(BaseFrame):
         
         self.btn = ttk.Button(box, text="Crear Repositorio", style='Primary.TButton', command=self.create_repo, state="disabled")
         self.btn.pack(fill="x")
+
+    def browse_folder(self):
+        self.folder_selected = filedialog.askdirectory(title="Seleccionar carpeta del proyecto")
+        if self.folder_selected:
+            self.path_input.config(state="normal")
+            self.path_input.delete(0, "end")
+            self.path_input.insert(0, self.folder_selected)
+            self.path_input.config(state="readonly")
         
     def validate(self, event=None):
         name = self.name_input.get().strip()
@@ -455,10 +713,26 @@ class HU003_CrearRepo(BaseFrame):
             self.help_lbl.config(text="⚠️ Usa 3-50 caracteres con letras, números o guion", style='Help.TLabel')
             
     def create_repo(self):
-        self.show_toast("✓ Repositorio creado exitosamente.", "success")
-        self.name_input.delete(0, 'end')
-        self.desc_input.delete(0, 'end')
-        self.btn.config(state="disabled")
+        user_id = (
+            self.controller.usuario_actual["id"]
+            if isinstance(self.controller.usuario_actual, dict)
+            else (self.controller.usuario_actual.id if self.controller.usuario_actual else 1)
+        )
+        nombre = self.name_input.get().strip()
+        descripcion = self.desc_input.get().strip()
+
+        try:
+            nuevo = self.controller.facade.crear_proyecto(
+                user_id, nombre, descripcion, self.folder_selected, self.priv_var.get()
+            )
+            if nuevo:
+                self.show_toast(
+                    f"✓ Repositorio '{nombre}' creado con éxito.", "success"
+                )
+                self.after(1500, self.controller.show_frame("HU009_ListarRepositorios"))
+                #self.controller.show_frame("HU009_ListarRepositorios")
+        except Exception as e:
+            self.show_toast(f"Error al crear repositorio: {e}", "error")
 
 class HU004_Commit(BaseFrame):
     def __init__(self, parent, controller):

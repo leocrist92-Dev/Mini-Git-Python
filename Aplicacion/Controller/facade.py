@@ -30,8 +30,8 @@ class MiniGitFacade:
         return self.srv_usuarios.cambiar_estado_usuario(id_usuario, estado)
 
     # --- Puntos de Acceso UI : Proyectos ---
-    def crear_proyecto(self, id_usuario, nombre, descripcion, visibilidad):
-        return self.srv_proyectos.crear_proyecto(id_usuario, nombre, descripcion, visibilidad)
+    def crear_proyecto(self, id_usuario, nombre, descripcion, ruta, visibilidad):
+        return self.srv_proyectos.crear_proyecto(id_usuario, nombre, descripcion, ruta, visibilidad)
 
     def listar_proyectos_usuario(self, id_usuario):
         return self.srv_proyectos.listar_proyectos_usuario(id_usuario)
@@ -52,6 +52,15 @@ class MiniGitFacade:
 
     def obtener_historial(self, id_proyecto):
         return self.srv_versionado.obtener_historial(id_proyecto)
+
+    def contar_commits_totales_usuario(self, id_usuario):
+        return self.srv_versionado.contar_commits_totales_usuario(id_usuario)
+
+    def obtener_ultima_actualizacion(self, id_proyecto, fecha_creacion_defecto=None):
+        return self.srv_versionado.obtener_ultima_actualizacion(id_proyecto, fecha_creacion_defecto)
+
+    def obtener_lenguaje_proyecto(self, id_proyecto, ruta_proyecto=None):
+        return self.srv_proyectos.detectar_lenguaje_proyecto(id_proyecto, ruta_proyecto)
 
     def comparar_versiones(self, id_version1, id_version2):
         return self.srv_versionado.comparar_versiones(id_version1, id_version2)

@@ -54,6 +54,17 @@ class ServicioVersionado:
         """Hace SELECT ordenado por fecha desc."""
         return self.dao.obtener_versiones_proyecto_desc(id_proyecto)
 
+    def contar_commits_totales_usuario(self, id_usuario):
+        """Obtiene la suma global de commits de todos los proyectos del usuario."""
+        return self.dao.contar_commits_totales_usuario(id_usuario)
+
+    def obtener_ultima_actualizacion(self, id_proyecto, fecha_creacion_defecto=None):
+        """Retorna la fecha del ultimo commit o la fecha de creacion si no hay commits."""
+        ultima_fecha = self.dao.obtener_ultima_fecha_commit(id_proyecto)
+        if ultima_fecha:
+            return ultima_fecha
+        return fecha_creacion_defecto
+
     def comparar_versiones(self, id_version1, id_version2):
         """Simula diff leyendo archivos y generando +-"""
         # En una impl. real leería el zip1 y zip2 y ejecutaría un diff

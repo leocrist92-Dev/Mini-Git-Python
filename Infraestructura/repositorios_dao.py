@@ -46,8 +46,24 @@ class RepositoriosDAO:
         res = self._ejecutar(q, (correo,), fetch=True)
         if res:
             u = res[0]
-            return Usuario(u['id'], u['nombre'], u['correo'], u['password_hash'], u['estado'])
+            return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], ['estado'])
         return None
+
+    def obtener_usuario_por_nombre(self, nombre):
+            q = "SELECT * FROM usuarios WHERE nombre = %s;"
+            res = self._ejecutar(q, (nombre,), fetch=True)
+            if res:
+                u = res[0]
+                return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], ['estado'])
+            return None
+
+    def obtener_usuario_por_nombre_usuario(self, nombre_usuario):
+                q = "SELECT * FROM usuarios WHERE nombre_usuario = %s;"
+                res = self._ejecutar(q, (nombre_usuario,), fetch=True)
+                if res:
+                    u = res[0]
+                    return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], ['estado'])
+                return None
 
     def insertar_usuario(self, nombre, correo, usuario, password_hash):
         q = "INSERT INTO usuarios (nombre, correo, nombre_usuario, password_hash) VALUES (%s, %s, %s, %s);"
@@ -63,14 +79,22 @@ class RepositoriosDAO:
         return self._ejecutar(q, (estado, id_usuario))
 
     # --- Proyectos ---
-    def insertar_proyecto(self, id_usuario, nombre, descripcion, visibilidad):
-        q = "INSERT INTO proyectos (id_usuario, nombre, descripcion, visibilidad) VALUES (%s, %s, %s, %s);"
-        return self._ejecutar(q, (id_usuario, nombre, descripcion, visibilidad))
+    def insertar_proyecto(self, id_usuario, nombre, descripcion, ruta, visibilidad):
+        q = "INSERT INTO proyectos (id_usuario, nombre, descripcion, ruta, visibilidad) VALUES (%s, %s, %s, %s, %s);"
+        return self._ejecutar(q, (id_usuario, nombre, descripcion, ruta, visibilidad))
+
+    def obtener_fecha_creacion(self, id_proyecto):
+        q = "SELECT fecha_creacion FROM proyectos WHERE id = %s;"
+        res = self._ejecutar(q, (id_proyecto,), fetch=True)
+        if res:
+            p_fecha = res[0]
+            return p_fecha
+        return None
 
     def obtener_proyectos_por_usuario(self, id_usuario):
         q = "SELECT * FROM proyectos WHERE id_usuario = %s;"
         res = self._ejecutar(q, (id_usuario,), fetch=True)
-        return [Proyecto(p['id'], p['id_usuario'], p['nombre'], p['descripcion'], p['visibilidad'], p['fecha_creacion']) for p in res]
+        return [Proyecto(p['id'], p['id_usuario'], p['nombre'], p['descripcion'], p['ruta'], p['visibilidad'], p['fecha_creacion']) for p in res]
 
     def eliminar_proyecto(self, id_proyecto):
         """Elimina el repositorio permanentemente de la BD."""
@@ -83,6 +107,33 @@ class RepositoriosDAO:
         if res:
             p = res[0]
             return Proyecto(p['id'], p['id_usuario'], p['nombre'], p['descripcion'], p['visibilidad'], p['fecha_creacion'])
+        return None
+
+    def contar_commits_totales_usuario(self, id_usuario):
+        """Cuenta todos los commits realizados en proyectos del usuario."""
+        q = """
+            SELECT COUNT(v.id) as total
+            FROM versiones_archivo v
+            JOIN archivos a ON v.id_archivo = a.id
+            JOIN proyectos p ON a.id_proyecto = p.id
+            WHERE p.id_usuario = %s;
+        """
+        res = self._ejecutar(q, (id_usuario,), fetch=True)
+        if res and len(res) > 0 and res[0]['total'] is not None:
+            return res[0]['total']
+        return 0
+
+    def obtener_ultima_fecha_commit(self, id_proyecto):
+        """Obtiene la fecha del último commit realizado en el proyecto."""
+        q = """
+            SELECT MAX(v.fecha) as ultima_fecha
+            FROM versiones_archivo v
+            JOIN archivos a ON v.id_archivo = a.id
+            WHERE a.id_proyecto = %s;
+        """
+        res = self._ejecutar(q, (id_proyecto,), fetch=True)
+        if res and len(res) > 0 and res[0]['ultima_fecha']:
+            return res[0]['ultima_fecha']
         return None
 
     # --- Archivos ---
