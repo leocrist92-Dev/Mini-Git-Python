@@ -68,7 +68,7 @@ class ServicioProyectos:
             return max(conteo, key=conteo.get)
 
         # Si no hay archivos en BD pero existe la ruta física, escanearla
-        if ruta_proyecto and os.path.exists(ruta_proyecto):
+        if not conteo and ruta_proyecto and os.path.exists(ruta_proyecto):
             try:
                 for f in os.listdir(ruta_proyecto):
                     ext = os.path.splitext(f)[1].lower()

@@ -4,6 +4,14 @@ import re
 from Aplicacion.Controller.facade import MiniGitFacade
 from Dominio.proyecto import Proyecto
 
+import os
+import sys
+import datetime
+import hashlib
+import zipfile
+import difflib
+import shutil
+
 
 class MainApp(tk.Tk):
     def __init__(self):
@@ -24,7 +32,8 @@ class MainApp(tk.Tk):
             "cyan": "#38bdf8",
             "ok": "#22c55e",
             "warn": "#f59e0b",
-            "border": "#1e293b" # Aproximación a rgba(255,255,255,.14)
+            "border": "#1e293b", # Aproximación a rgba(255,255,255,.14)
+            "fg": "#ffffff"
         }
         
         self.configure(bg=self.colors["bg"])
@@ -738,63 +747,230 @@ class HU004_Commit(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
         self.build_nav()
-        
+        self.cambios_detectados = []
+        self.check_vars = {}
+
+    def on_show(self):
+        for widget in self.winfo_children():
+            widget.destroy()
+
         box = ttk.Frame(self, style='App.TFrame', padding=20)
         box.pack(fill="both", expand=True)
-        
+
+        repo = self.controller.proyecto_actual
+        if not repo:
+            ttk.Label(box, text="Selecciona un repositorio primero en el listado.", style="Title.TLabel").pack(pady=20)
+            return
+
+        r_id = repo.id
+        r_nombre = repo.nombre
+        r_ruta = repo.ruta
+        r_path_full = os.path.join(r_ruta, r_nombre) if r_ruta else ""
+
+        # Header Title
         top = ttk.Frame(box, style='App.TFrame')
         top.pack(fill="x")
         ttk.Label(top, text="Cambios Pendientes (Staging)", style='Title.TLabel').pack(side="left")
         ttk.Button(top, text="Ocultar/Mostrar Diff", style='Secondary.TButton', command=self.toggle_diff).pack(side="right")
         
-        # Etiquetas (Autor, Rama, Fecha)
+        # Etiquetas (Repositorio, Autor, Rama, Fecha) - Meta Tags Chip Bar
         meta_frame = ttk.Frame(box, style='App.TFrame')
         meta_frame.pack(fill="x", pady=10)
-        ttk.Label(meta_frame, text="👤 Autor: Juan Pérez", style='Chip.TLabel').pack(side="left", padx=2)
-        ttk.Label(meta_frame, text="🌿 Rama: feature/login", style='Chip.TLabel').pack(side="left", padx=2)
-        ttk.Label(meta_frame, text="📅 Fecha: Ahora mismo", style='Chip.TLabel').pack(side="left", padx=2)
+    
+        # 1. Nombre del Repositorio (Primero)
+        ttk.Label(
+            meta_frame, text=f"📁 Repo: {r_nombre}", font=("Segoe UI", 9, "bold"),
+            style='Chip.TLabel'
+        ).pack(side="left", padx=(0, 12))
+
+        # 2. Autor
+        user_name = self.controller.usuario_actual.nombre
+        ttk.Label(
+            meta_frame, text=f"👤 Autor: {user_name}", font=("Segoe UI", 9, "bold"),
+            style='Chip.TLabel'
+        ).pack(side="left", padx=(0, 12))
+
+        # 3. Rama
+        ttk.Label(
+            meta_frame, text="🌿 Rama: main", font=("Segoe UI", 9, "bold"),
+            style='Chip.TLabel'
+        ).pack(side="left", padx=(0, 12))
+
+        # 4. Fecha
+        ttk.Label(
+            meta_frame, text="📅 Fecha: Ahora mismo", font=("Segoe UI", 9, "bold"),
+            style='Chip.TLabel'
+        ).pack(side="left")
         
+        # Main Workspace: Left Staging Panel, Right Diff Panel
+        paned = ttk.PanedWindow(box, orient="horizontal")
+        paned.pack(fill="both", expand=True)
+
+        # Left Panel (Staging & Actions)
+        left_panel = ttk.Frame(paned, style="Panel.TFrame", padding=10)
+        paned.add(left_panel, weight=1)
+
+        ttk.Label(left_panel, text="Archivos con Cambios", font=("Segoe UI", 10, "bold"), foreground=self.controller.colors["blue"], background=self.controller.colors["panel"]).pack(anchor="w", pady=(0, 8))
+
+        # Buttons Bar for Adding External Files / Refreshing
+        btn_action_box = ttk.Frame(left_panel, style="Panel.TFrame")
+        btn_action_box.pack(fill="x", pady=(0, 10))
+
+        ttk.Button(
+            btn_action_box, text="➕ Agregar Archivos", style="Secondary.TButton",
+            command=lambda: self.agregar_archivos_externos(r_path_full)
+        ).pack(side="left", padx=2)
+
+        ttk.Button(
+            btn_action_box, text="🔄 Refrescar", style="Secondary.TButton",
+            command=lambda: self.cargar_cambios(r_id, r_path_full)
+        ).pack(side="left", padx=2)
+
+        # Scrollable Frame for Checkboxes
+        self.files_container = ttk.Frame(left_panel, style="Panel.TFrame")
+        self.files_container.pack(fill="both", expand=True)
+
+        # Right Panel (Diff Viewer & Commit Form)
         self.diff_visible = True
-        self.diff_frame = ttk.Frame(box, style='Panel.TFrame')
-        self.diff_frame.pack(fill="x", pady=(5, 15))
-        
-        self.diff = tk.Text(self.diff_frame, height=6, bg=self.controller.colors["panel"], fg=self.controller.colors["cyan"], font=("Consolas", 10), bd=1, relief="solid")
-        self.diff.pack(fill="x", padx=2, pady=2)
-        self.diff.insert("1.0", "--- a/main.py\n+++ b/main.py\n@@ -1,3 +1,4 @@\n def saludar():\n-    print('Hola')\n+    print('Hola Mundo')\n+    print('SENA')")
-        
-        self.diff.tag_add("del", "5.0", "5.end")
-        self.diff.tag_add("add", "6.0", "7.end")
-        self.diff.tag_config("del", foreground=self.controller.colors["red"])
-        self.diff.tag_config("add", foreground=self.controller.colors["ok"])
-        
-        self.diff.config(state="disabled")
-        
-        ttk.Label(box, text="Mensaje del Commit (Corto) *", style='App.TLabel').pack(anchor="w")
-        self.msg = ttk.Entry(box, font=("Segoe UI", 11))
-        self.msg.pack(fill="x", pady=5)
-        self.msg.bind("<KeyRelease>", self.check)
-        
-        ttk.Label(box, text="Descripción Detallada (Opcional)", style='App.TLabel').pack(anchor="w", pady=(10, 0))
-        self.desc = tk.Text(box, height=4, bg=self.controller.colors["panel_2"], fg="white", font=("Segoe UI", 10), bd=1, relief="solid")
-        self.desc.pack(fill="x", pady=5)
-        
-        btns = ttk.Frame(box, style='App.TFrame')
-        btns.pack(fill="x", pady=10)
-        
-        self.btn_save = ttk.Button(btns, text="Guardar Commit", style='Primary.TButton', command=self.save_commit, state="disabled")
-        self.btn_save.pack(side="left")
-        ttk.Button(btns, text="Descartar Cambios", style='Danger.TButton', command=self.discard).pack(side="right")
+        right_panel = ttk.Frame(paned, style="App.TFrame", padding=(10, 0, 0, 0))
+        paned.add(right_panel, weight=3)
+
+        ttk.Label(right_panel, text="Diferencias Detectadas (Diff)", font=("Segoe UI", 10, "bold"), foreground=self.controller.colors["fg"], background=self.controller.colors["bg"]).pack(anchor="w", pady=(0, 5))
+
+        # Diff Text Box with Horizontal and Vertical Scrollbars
+        diff_box = ttk.Frame(right_panel, style="App.TFrame")
+        diff_box.pack(fill="both", expand=True, pady=(0, 10))
+
+        self.txt_diff = tk.Text(
+            diff_box, bg="#0d1117", fg="#e2e8f0", font=("Consolas", 9),
+            wrap="none", highlightthickness=1, highlightbackground="#1e293b", bd=0
+        )
+        v_sc = ttk.Scrollbar(diff_box, orient="vertical", command=self.txt_diff.yview)
+        h_sc = ttk.Scrollbar(diff_box, orient="horizontal", command=self.txt_diff.xview)
+        self.txt_diff.configure(yscrollcommand=v_sc.set, xscrollcommand=h_sc.set)
+
+        v_sc.pack(side="right", fill="y")
+        h_sc.pack(side="bottom", fill="x")
+        self.txt_diff.pack(side="left", fill="both", expand=True)
+
+        # Configurar etiquetas de colores para el diff
+        self.txt_diff.tag_config("blue", foreground="#38bdf8", font=("Consolas", 9, "bold"))
+        self.txt_diff.tag_config("red", foreground="#f87171")
+        self.txt_diff.tag_config("green", foreground="#4ade80")
+        self.txt_diff.tag_config("context", foreground="#cbd5e1")
+
+        # Commit Message Form
+        msg_frame = ttk.Frame(right_panel, style="App.TFrame")
+        msg_frame.pack(fill="x")
+
+        ttk.Label(msg_frame, text="Mensaje del Commit:", font=("Segoe UI", 9, "bold"), foreground=self.controller.colors["fg"], background=self.controller.colors["bg"]).pack(anchor="w", pady=(0, 3))
+        self.ent_msg = ttk.Entry(msg_frame, font=("Segoe UI", 10))
+        self.ent_msg.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(msg_frame, text="Descripción Detallada (Opcional)", foreground=self.controller.colors["fg"], background=self.controller.colors["bg"]).pack(anchor="w", pady=(10, 0))
+        self.desc_msg = tk.Text(msg_frame, height=4, bg=self.controller.colors["panel_2"], fg="white", font=("Segoe UI", 10), bd=1, relief="solid")
+        self.desc_msg.pack(fill="x", pady=5)
+
+        ttk.Button(
+            msg_frame, text="🚀 Realizar Commit", style="Primary.TButton",
+            command=lambda: self.ejecutar_commit(r_id)
+        ).pack(fill="x")
+
+        # Cargar los cambios iniciales
+        self.cargar_cambios(r_id, r_path_full)
+
+    def cargar_cambios(self, id_proyecto, ruta_proyecto):
+        for w in self.files_container.winfo_children(): w.destroy()
+        self.txt_diff.config(state="normal")
+        self.txt_diff.delete("1.0", tk.END)
+
+        res = self.controller.facade.escanean_y_calcular_diferencias(id_proyecto, ruta_proyecto)
+        self.cambios_detectados = res.get("cambios", [])
+        diff_texto = res.get("diff_texto", "")
+
+        self.check_vars = {}
+        if not self.cambios_detectados:
+            ttk.Label(self.files_container, text="Sin cambios pendientes.", font=("Segoe UI", 9, "italic"), foreground=self.controller.colors["muted"], background=self.controller.colors["panel"]).pack(anchor="w", pady=10)
+        else:
+            for item in self.cambios_detectados:
+                var = tk.BooleanVar(value=True)
+                self.check_vars[item['nombre']] = (var, item)
+                tag_tipo = " [Nuevo]" if item['es_nuevo'] else " [Modificado]"
+                chk = tk.Checkbutton(
+                    self.files_container, text=f"{item['nombre']}{tag_tipo}", variable=var,
+                    bg=self.controller.colors["panel"], fg=self.controller.colors["fg"],
+                    selectcolor=self.controller.colors["bg"], activebackground=self.controller.colors["panel"],
+                    activeforeground=self.controller.colors["blue"], font=("Segoe UI", 9)
+                )
+                chk.pack(anchor="w", pady=2)
+
+        # Insertar diff formateado línea por línea
+        for line in diff_texto.splitlines(keepends=True):
+            if line.startswith("---") or line.startswith("+++") or line.startswith("@@"):
+                self.txt_diff.insert(tk.END, line, "blue")
+            elif line.startswith("-"):
+                self.txt_diff.insert(tk.END, line, "red")
+            elif line.startswith("+"):
+                self.txt_diff.insert(tk.END, line, "green")
+            else:
+                self.txt_diff.insert(tk.END, line, "context")
+
+        self.txt_diff.config(state="disabled")
+
+    def agregar_archivos_externos(self, ruta_proyecto):
+        if not ruta_proyecto or not os.path.exists(ruta_proyecto):
+            self.show_toast("No existe la carpeta del proyecto en disco.", "error")
+            return
+
+        archivos_sel = filedialog.askopenfilenames(title="Seleccionar archivos para el proyecto")
+        if archivos_sel:
+            for ruta_origen in archivos_sel:
+                try:
+                    nombre = os.path.basename(ruta_origen)
+                    dest = os.path.join(ruta_proyecto, nombre)
+                    shutil.copy(ruta_origen, dest)
+                except Exception as e:
+                    print(f"Error copiando archivo: {e}")
+
+            repo = self.controller.proyecto_actual
+            self.cargar_cambios(repo.id, ruta_proyecto)
+            self.show_toast("Archivos agregados al directorio del proyecto.", "info")
+
+    def ejecutar_commit(self, id_proyecto):
+        mensaje = self.ent_msg.get().strip()
+        descripcionOp = self.desc_msg.get("1.0", "end-1c").strip()
+        if not mensaje:
+            self.show_toast("Escribe un mensaje descriptivo para el commit.", "error")
+            return
+
+        archivos_a_commitear = [
+            item for nombre, (var, item) in self.check_vars.items() if var.get()
+        ]
+
+        if not archivos_a_commitear:
+            self.show_toast("Selecciona al menos un archivo para incluir en el commit.", "error")
+            return
+
+        user_id = self.controller.usuario_actual.id
+        try:
+            exito = self.controller.facade.crear_commit_completo(id_proyecto, user_id, archivos_a_commitear, mensaje, descripcionOp)
+            if exito:
+                #self.show_toast("¡Commit realizado con éxito!", "info")
+                self.controller.show_frame("HU009_ListarRepositorios")
+            else:
+                pass
+                #self.show_toast("No se pudo completar el commit.", "error")
+        except Exception as e:
+            pass
+            #self.show_toast(f"Error al hacer commit: {e}", "error")
 
     def toggle_diff(self):
-        if self.diff_visible:
-            self.diff_frame.pack_forget()
-        else:
-            # Se reinserta antes del mensaje corto
-            self.diff_frame.pack(fill="x", pady=(5, 15), before=self.msg.master.winfo_children()[4]) 
-        self.diff_visible = not self.diff_visible
-        
-    def check(self, event=None):
-        self.btn_save.config(state="normal" if self.msg.get().strip() else "disabled")
+            if self.diff_visible:
+                self.diff_box.pack_forget()
+            else:
+                # Se reinserta antes del mensaje corto
+                self.diff_box.pack(fill="x", pady=(5, 15), before=self.msg.master.winfo_children()[3]) 
+            self.diff_visible = not self.diff_visible
         
     def save_commit(self):
         self.show_toast("✓ Commit guardado exitosamente. Hash: a1b2c3d4e5f6", "success")

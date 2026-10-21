@@ -3,6 +3,7 @@ import zipfile
 import os
 import datetime
 import shutil
+import difflib
 from Dominio.version_archivo import VersionArchivo
 from Dominio.rama import Rama
 from Infraestructura.repositorios_dao import RepositoriosDAO
@@ -82,3 +83,120 @@ class ServicioVersionado:
         # Se requiere extraer el zip de la versión seleccionada y sobrescribir
         print(f"Extrayendo y sobrescribiendo archivos físicos al estado del commit {id_version}...")
         return True
+
+    #para commit de todos los archivos
+    def obtener_contenido_ultimo_commit(self, id_archivo, ruta_zip):
+        if not ruta_zip or not os.path.exists(ruta_zip):
+            return None
+        try:
+            with zipfile.ZipFile(ruta_zip, 'r') as zf:
+                archivos = zf.namelist()
+                if archivos:
+                    with zf.open(archivos[0]) as f:
+                        return f.read().decode('utf-8', errors='replace')
+        except Exception as e:
+            print(f"Error leyendo zip de commit anterior: {e}")
+        return None
+
+    def escanean_y_calcular_diferencias(self, id_proyecto, ruta_proyecto):
+        if not ruta_proyecto or not os.path.exists(ruta_proyecto):
+            return {"cambios": [], "diff_texto": "Ruta física del proyecto no encontrada."}
+
+        cambios = []
+        lineas_diff_totales = []
+
+        # Recorrer archivos físicos en la carpeta del repositorio
+        for root, dirs, files in os.walk(ruta_proyecto):
+            # Ignorar carpetas ocultas o de sistema
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            for file in files:
+                if file.startswith('.'): continue
+                
+                ruta_abs = os.path.join(root, file)
+                rel_path = os.path.relpath(ruta_abs, ruta_proyecto)
+
+                # Leer contenido en disco
+                try:
+                    with open(ruta_abs, 'r', encoding='utf-8', errors='replace') as f:
+                        contenido_actual = f.read()
+                except Exception:
+                    continue
+
+                # Buscar si existe versión previa en BD
+                id_archivo = self.dao.obtener_o_crear_archivo(id_proyecto, file, rel_path)
+                version_previa = self.dao.obtener_ultima_version_archivo(id_archivo)
+                
+                contenido_anterior = None
+                if version_previa:
+                    contenido_anterior = self.obtener_contenido_ultimo_commit(id_archivo, version_previa.contenido_comprimido)
+
+                # Si es un archivo nuevo sin versión previa
+                if contenido_anterior is None:
+                    lineas_ant = []
+                    lineas_act = contenido_actual.splitlines(keepends=True)
+                else:
+                    lineas_ant = contenido_anterior.splitlines(keepends=True)
+                    lineas_act = contenido_actual.splitlines(keepends=True)
+
+                # Calcular Diff con difflib
+                diff = list(difflib.unified_diff(
+                    lineas_ant,
+                    lineas_act,
+                    fromfile=f"a/{file}",
+                    tofile=f"b/{file}"
+                ))
+
+                if diff or contenido_anterior is None:
+                    # El archivo cambió o es totalmente nuevo
+                    if not diff and contenido_anterior is None:
+                        diff = [f"--- a/{file}\n", f"+++ b/{file}\n", "@@ -0,0 +1,{} @@\n".format(len(lineas_act))] + [f"+{l}" for l in lineas_act]
+
+                    cambios.append({
+                        "id_archivo": id_archivo,
+                        "nombre": file,
+                        "ruta_relativa": rel_path,
+                        "ruta_abs": ruta_abs,
+                        "es_nuevo": contenido_anterior is None
+                    })
+
+                    lineas_diff_totales.extend(diff)
+                    lineas_diff_totales.append("\n") # Espacio entre archivos
+
+        diff_texto = "".join(lineas_diff_totales) if lineas_diff_totales else "No se detectaron cambios en los archivos del proyecto."
+        return {"cambios": cambios, "diff_texto": diff_texto}
+
+    def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion):
+        if not mensaje.strip():
+            raise Exception("El mensaje de commit es obligatorio.")
+        if not lista_archivos:
+            raise Exception("No hay archivos seleccionados para hacer commit.")
+
+        proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
+        if not proyecto: raise Exception("Proyecto no válido.")
+
+        ruta_completa = os.path.join(proyecto.ruta, proyecto.nombre)
+        print(f"Ruta project: {ruta_completa}")
+        carpeta_commits = os.path.join(ruta_completa, ".commits")
+        if not os.path.exists(carpeta_commits):
+            os.makedirs(carpeta_commits)
+
+        versiones_creadas = []
+        for item in lista_archivos:
+            ruta_abs = item['ruta_abs']
+            if not os.path.exists(ruta_abs): continue
+
+            with open(ruta_abs, 'rb') as f:
+                contenido_bytes = f.read()
+                hash_ver = hashlib.sha1(contenido_bytes).hexdigest()
+
+            ruta_zip = os.path.join(carpeta_commits, f"{hash_ver}.zip")
+            with zipfile.ZipFile(ruta_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(ruta_abs, arcname=item['nombre'])
+
+            id_version = self.dao.insertar_version_archivo(
+                item['id_archivo'], id_usuario, hash_ver, mensaje, descripcion, ruta_zip
+            )
+            if id_version:
+                versiones_creadas.append(id_version)
+
+        return len(versiones_creadas) > 0

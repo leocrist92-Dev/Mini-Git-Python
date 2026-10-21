@@ -46,7 +46,7 @@ class RepositoriosDAO:
         res = self._ejecutar(q, (correo,), fetch=True)
         if res:
             u = res[0]
-            return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], ['estado'])
+            return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], u['estado'])
         return None
 
     def obtener_usuario_por_nombre(self, nombre):
@@ -54,7 +54,7 @@ class RepositoriosDAO:
             res = self._ejecutar(q, (nombre,), fetch=True)
             if res:
                 u = res[0]
-                return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], ['estado'])
+                return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], u['estado'])
             return None
 
     def obtener_usuario_por_nombre_usuario(self, nombre_usuario):
@@ -62,7 +62,7 @@ class RepositoriosDAO:
                 res = self._ejecutar(q, (nombre_usuario,), fetch=True)
                 if res:
                     u = res[0]
-                    return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], ['estado'])
+                    return Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], u['estado'])
                 return None
 
     def insertar_usuario(self, nombre, correo, usuario, password_hash):
@@ -72,7 +72,7 @@ class RepositoriosDAO:
     def obtener_todos_usuarios(self):
         q = "SELECT * FROM usuarios;"
         res = self._ejecutar(q, fetch=True)
-        return [Usuario(u['id'], u['nombre'], u['correo'], u['password_hash'], u['estado']) for u in res]
+        return [Usuario(u['id'], u['nombre'], u['correo'], u['nombre_usuario'], u['password_hash'], u['rol'], u['estado']) for u in res]
 
     def actualizar_estado_usuario(self, id_usuario, estado):
         q = "UPDATE usuarios SET estado = %s WHERE id = %s;"
@@ -106,9 +106,51 @@ class RepositoriosDAO:
         res = self._ejecutar(q, (id_proyecto,), fetch=True)
         if res:
             p = res[0]
-            return Proyecto(p['id'], p['id_usuario'], p['nombre'], p['descripcion'], p['visibilidad'], p['fecha_creacion'])
+            return Proyecto(p['id'], p['id_usuario'], p['nombre'], p['descripcion'], p['ruta'], p['visibilidad'], p['fecha_creacion'])
         return None
 
+    #Funciones para insertar commits
+    def obtener_o_crear_tipo_archivo(self, extension):
+        ext = extension.lower().strip()
+        if not ext: ext = ".txt"
+        q_sel = "SELECT id FROM tipos_archivo WHERE extension = %s;"
+        res = self._ejecutar(q_sel, (ext,), fetch=True)
+        if res:
+            return res[0]['id']
+        nombre_cat = ext.replace(".", "").upper() + " File"
+        q_ins = "INSERT INTO tipos_archivo (nombre, descripcion, extension) VALUES (%s, %s, %s);"
+        return self._ejecutar(q_ins, (nombre_cat, f"Archivos tipo {ext}", ext))
+
+    def obtener_o_crear_archivo(self, id_proyecto, nombre_archivo, ruta_relativa):
+        q_sel = "SELECT * FROM archivos WHERE id_proyecto = %s AND nombre = %s;"
+        res = self._ejecutar(q_sel, (id_proyecto, nombre_archivo), fetch=True)
+        if res:
+            return res[0]['id']
+        ext = os.path.splitext(nombre_archivo)[1]
+        id_tipo = self.obtener_o_crear_tipo_archivo(ext)
+        q_ins = "INSERT INTO archivos (id_proyecto, id_tipo, nombre, ruta_relativa) VALUES (%s, %s, %s, %s);"
+        return self._ejecutar(q_ins, (id_proyecto, id_tipo, nombre_archivo, ruta_relativa))
+
+    def obtener_archivos_por_proyecto(self, id_proyecto):
+        q = "SELECT * FROM archivos WHERE id_proyecto = %s;"
+        res = self._ejecutar(q, (id_proyecto,), fetch=True)
+        return [Archivo(a['id'], a['id_proyecto'], a['id_tipo'], a['nombre'], a['fecha_creacion']) for a in res]
+
+    def obtener_ultima_version_archivo(self, id_archivo):
+        q = "SELECT * FROM versiones_archivo WHERE id_archivo = %s ORDER BY fecha DESC LIMIT 1;"
+        res = self._ejecutar(q, (id_archivo,), fetch=True)
+        if res:
+            v = res[0]
+            return VersionArchivo(v['id'], v['id_archivo'], v['id_usuario'], v['hash_version'], v['mensaje'], v['contenido_comprimido'], v['fecha'])
+        return None
+
+    def insertar_version_archivo(self, id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido):
+        q = """INSERT INTO versiones_archivo 
+               (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido) 
+               VALUES (%s, %s, %s, %s, %s, %s);"""
+        return self._ejecutar(q, (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido))
+
+    #Funciones auxiliares
     def contar_commits_totales_usuario(self, id_usuario):
         """Cuenta todos los commits realizados en proyectos del usuario."""
         q = """

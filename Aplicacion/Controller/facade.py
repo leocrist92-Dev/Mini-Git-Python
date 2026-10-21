@@ -71,6 +71,13 @@ class MiniGitFacade:
     def restaurar_version(self, id_proyecto, id_version):
         return self.srv_versionado.restaurar_version(id_proyecto, id_version)
 
+    #Para commits
+    def escanean_y_calcular_diferencias(self, id_proyecto, ruta_proyecto):
+        return self.srv_versionado.escanean_y_calcular_diferencias(id_proyecto, ruta_proyecto)
+
+    def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion = None):
+        return self.srv_versionado.crear_commit_completo(id_proyecto, id_usuario, lista_archivos, mensaje, descripcion)
+
     # --- Puntos de Acceso UI : Etiquetas ---
     def crear_etiqueta(self, id_proyecto, nombre, descripcion):
         return self.srv_etiquetas.crear_etiqueta(id_proyecto, nombre, descripcion)
