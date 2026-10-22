@@ -81,7 +81,11 @@ class RepositoriosDAO:
     # --- Proyectos ---
     def insertar_proyecto(self, id_usuario, nombre, descripcion, ruta, visibilidad):
         q = "INSERT INTO proyectos (id_usuario, nombre, descripcion, ruta, visibilidad) VALUES (%s, %s, %s, %s, %s);"
-        return self._ejecutar(q, (id_usuario, nombre, descripcion, ruta, visibilidad))
+        id_proyecto = self._ejecutar(q, (id_usuario, nombre, descripcion, ruta, visibilidad))
+        if id_proyecto:
+            # Crear la rama main por defecto para este proyecto
+            self.crear_rama(id_proyecto, "main")
+        return id_proyecto
 
     def obtener_fecha_creacion(self, id_proyecto):
         q = "SELECT fecha_creacion FROM proyectos WHERE id = %s;"
@@ -144,11 +148,11 @@ class RepositoriosDAO:
             return VersionArchivo(v['id'], v['id_archivo'], v['id_usuario'], v['hash_version'], v['mensaje'], v['contenido_comprimido'], v['fecha'])
         return None
 
-    def insertar_version_archivo(self, id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido):
+    def insertar_version_archivo(self, id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama):
         q = """INSERT INTO versiones_archivo 
-               (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido) 
-               VALUES (%s, %s, %s, %s, %s, %s);"""
-        return self._ejecutar(q, (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido))
+               (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama) 
+               VALUES (%s, %s, %s, %s, %s, %s, %s);"""
+        return self._ejecutar(q, (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama))
 
     #Funciones auxiliares
     def contar_commits_totales_usuario(self, id_usuario):
@@ -189,12 +193,6 @@ class RepositoriosDAO:
         return [Archivo(a['id'], a['id_proyecto'], a['id_tipo'], a['nombre'], a['fecha_creacion']) for a in res]
 
     # --- Versionado (Commits y Ramas) ---
-    def insertar_version(self, id_archivo, id_usuario, hash_version, mensaje, contenido_comprimido):
-        q = """INSERT INTO versiones_archivo 
-               (id_archivo, id_usuario, hash_version, mensaje, contenido_comprimido) 
-               VALUES (%s, %s, %s, %s, %s);"""
-        return self._ejecutar(q, (id_archivo, id_usuario, hash_version, mensaje, contenido_comprimido))
-
     def obtener_versiones_proyecto_desc(self, id_proyecto):
         # Se solicita ORDER BY fecha DESC
         q = """
@@ -207,8 +205,35 @@ class RepositoriosDAO:
         return [VersionArchivo(v['id'], v['id_archivo'], v['id_usuario'], v['hash_version'], v['mensaje'], v['contenido_comprimido'], v['fecha']) for v in res]
 
     def insertar_rama(self, id_proyecto, nombre, id_version_base):
-        q = "INSERT INTO ramas (id_proyecto, nombre, id_version_base) VALUES (%s, %s, %s);"
-        return self._ejecutar(q, (id_proyecto, nombre, id_version_base))
+        q = "INSERT INTO ramas (id_proyecto, nombre, id_version_base, activa) VALUES (%s, %s, %s, %s);"
+        return self._ejecutar(q, (id_proyecto, nombre, id_version_base, 'No'))
+
+    def crear_rama(self, id_proyecto, nombre_rama):
+        """Crea una nueva rama en la tabla 'ramas'."""
+        q = "INSERT INTO ramas (id_proyecto, nombre, activa) VALUES (%s, %s, %s);"
+        return self._ejecutar(q, (id_proyecto, nombre_rama, 'Si'))
+
+    def obtener_rama_activa(self, id_proyecto):
+        """Obtiene el nombre de la rama activa principal para un proyecto."""
+        q = "SELECT * FROM ramas WHERE id_proyecto = %s AND activa = 'Si';"
+        res = self._ejecutar(q, (id_proyecto,), fetch=True)
+        if res and len(res) > 0 and res[0]['nombre']:
+            r = res[0]
+            return Rama(r['id'], r['id_proyecto'], r['nombre'], r['id_version_base'], r['fecha_creacion'], r['activa'])
+        return None
+
+    def existe_hash_version_en_proyecto(self, id_proyecto, hash_version):
+        """Verifica si ya existe una versión con el mismo hash SHA-1 en el proyecto especifico."""
+        q = """
+            SELECT COUNT(*) as total
+            FROM versiones_archivo v
+            JOIN archivos a ON v.id_archivo = a.id
+            WHERE a.id_proyecto = %s AND v.hash_version = %s;
+        """
+        res = self._ejecutar(q, (id_proyecto, hash_version), fetch=True)
+        if res and len(res) > 0 and res[0]['total'] is not None:
+            return res[0]['total'] > 0
+        return False
 
     # --- Etiquetas ---
     def insertar_etiqueta(self, id_proyecto, nombre, descripcion):
@@ -218,3 +243,25 @@ class RepositoriosDAO:
     def insertar_version_etiqueta(self, id_version, id_etiqueta):
         q = "INSERT INTO versiones_etiquetas (id_version, id_etiqueta) VALUES (%s, %s);"
         return self._ejecutar(q, (id_version, id_etiqueta))
+
+    # --- Historial ---
+    def obtener_historial_commits_proyecto(self, id_proyecto):
+        """Consulta el historial de commits de un proyecto con información de usuario y archivo."""
+        q = """
+            SELECT 
+                v.id,
+                v.hash_version,
+                v.mensaje,
+                v.fecha,
+                u.nombre as autor,
+                a.nombre as nombre_archivo,
+                a.ruta_relativa,
+                r.nombre as rama
+            FROM versiones_archivo v
+            JOIN archivos a ON v.id_archivo = a.id
+            JOIN usuarios u ON v.id_usuario = u.id 
+            LEFT JOIN ramas r ON v.id_rama = r.id 
+            WHERE a.id_proyecto = %s
+            ORDER BY v.fecha DESC;
+        """
+        return self._ejecutar(q, (id_proyecto,), fetch=True) or []

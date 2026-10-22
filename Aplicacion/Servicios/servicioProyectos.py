@@ -59,7 +59,7 @@ class ServicioProyectos:
         conteo = {}
         for a in archivos:
             nombre = getattr(a, 'nombre', '')
-            ext = os.path.splitext(nombre)[1].lower()
+            ext = str(os.path.splitext(nombre)[1].lower())
             if ext in ext_map:
                 lang = ext_map[ext]
                 conteo[lang] = conteo.get(lang, 0) + 1
@@ -77,7 +77,7 @@ class ServicioProyectos:
                         conteo[lang] = conteo.get(lang, 0) + 1
             except Exception:
                 pass
-
+        
         if conteo:
             return max(conteo, key=conteo.get)
 

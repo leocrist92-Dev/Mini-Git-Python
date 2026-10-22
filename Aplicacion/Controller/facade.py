@@ -68,6 +68,9 @@ class MiniGitFacade:
     def crear_rama(self, id_proyecto, nombre_rama, id_version_base):
         return self.srv_versionado.crear_rama(id_proyecto, nombre_rama, id_version_base)
 
+    def obtener_rama_activa(self, id_proyecto):
+        return self.srv_versionado.obtener_rama_activa(id_proyecto)
+
     def restaurar_version(self, id_proyecto, id_version):
         return self.srv_versionado.restaurar_version(id_proyecto, id_version)
 
@@ -78,12 +81,18 @@ class MiniGitFacade:
     def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion = None):
         return self.srv_versionado.crear_commit_completo(id_proyecto, id_usuario, lista_archivos, mensaje, descripcion)
 
+    # --- Historial ---
+    def obtener_historial_proyecto(self, id_proyecto):
+        return self.srv_versionado.obtener_historial_proyecto(id_proyecto)
+
     # --- Puntos de Acceso UI : Etiquetas ---
     def crear_etiqueta(self, id_proyecto, nombre, descripcion):
         return self.srv_etiquetas.crear_etiqueta(id_proyecto, nombre, descripcion)
 
     def asignar_etiqueta_a_version(self, id_version, id_etiqueta):
         return self.srv_etiquetas.asignar_etiqueta_a_version(id_version, id_etiqueta)
+
+    
 
 if __name__ == "__main__":
     print("Iniciando capa Facade de Mini-Git separada en módulos.")

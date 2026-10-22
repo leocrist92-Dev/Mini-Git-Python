@@ -15,41 +15,10 @@ class ServicioVersionado:
         self.dao = RepositoriosDAO()
         self.ruta_base = os.path.expanduser("~/.minigit")
 
-    def crear_commit(self, id_proyecto, id_usuario, archivos_seleccionados, mensaje):
-        """Genera hash SHA-1, comprime físicos y guarda el registro."""
-        proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
-        if not proyecto: raise Exception("Proyecto inválido")
-        
-        ruta_proyecto = os.path.join(self.ruta_base, proyecto.nombre)
-        versiones = []
-        
-        for archivo in archivos_seleccionados:
-            ruta_archivo = os.path.join(ruta_proyecto, archivo.nombre)
-            if not os.path.exists(ruta_archivo):
-                continue
-                
-            # 1. Leer contenido para el Hash SHA-1
-            with open(ruta_archivo, 'rb') as f:
-                contenido = f.read()
-                hash_version = hashlib.sha1(contenido).hexdigest()
-                
-            # 2. Comprimir el archivo (Simulamos guardando en una carpeta oculta '.commits')
-            carpeta_commits = os.path.join(ruta_proyecto, ".commits")
-            if not os.path.exists(carpeta_commits): os.makedirs(carpeta_commits)
-            
-            ruta_zip = os.path.join(carpeta_commits, f"{hash_version}.zip")
-            with zipfile.ZipFile(ruta_zip, 'w') as zf:
-                zf.write(ruta_archivo, arcname=archivo.nombre)
-                
-            # 3. Guardar registro en BD (VERSION_ARCHIVO)
-            id_version = self.dao.insertar_version(
-                archivo.id, id_usuario, hash_version, mensaje, ruta_zip
-            )
-            
-            if id_version:
-                versiones.append(VersionArchivo(id_version, archivo.id, id_usuario, hash_version, mensaje, ruta_zip))
-                
-        return versiones
+    def normalizar_texto(self, texto):
+        """Normaliza los saltos de línea para evitar falsas diferencias entre Windows y Unix."""
+        if texto is None: return None
+        return texto.replace('\r\n', '\n')
 
     def obtener_historial(self, id_proyecto):
         """Hace SELECT ordenado por fecha desc."""
@@ -78,6 +47,9 @@ class ServicioVersionado:
             return Rama(id_rama, id_proyecto, nombre_rama, id_version_base)
         raise Exception("Error al generar la rama en BD.")
 
+    def obtener_rama_activa(self, id_proyecto):
+        return self.dao.obtener_rama_activa(id_proyecto)
+
     def restaurar_version(self, id_proyecto, id_version):
         """Sobrescribe archivos físicos con los del backup de ese commit."""
         # Se requiere extraer el zip de la versión seleccionada y sobrescribir
@@ -93,7 +65,8 @@ class ServicioVersionado:
                 archivos = zf.namelist()
                 if archivos:
                     with zf.open(archivos[0]) as f:
-                        return f.read().decode('utf-8', errors='replace')
+                        raw = f.read().decode('utf-8', errors='replace')
+                        return self.normalizar_texto(raw)
         except Exception as e:
             print(f"Error leyendo zip de commit anterior: {e}")
         return None
@@ -130,13 +103,29 @@ class ServicioVersionado:
                 if version_previa:
                     contenido_anterior = self.obtener_contenido_ultimo_commit(id_archivo, version_previa.contenido_comprimido)
 
+                # Si el contenido actual es exactamente igual al anterior, NO hay cambios
+                if contenido_anterior is not None and contenido_actual == contenido_anterior:
+                    continue
+
                 # Si es un archivo nuevo sin versión previa
                 if contenido_anterior is None:
                     lineas_ant = []
+                    # Archivo completamente nuevo
                     lineas_act = contenido_actual.splitlines(keepends=True)
+                    diff = [f"--- a/{file}\n", f"+++ b/{file}\n", f"@@ -0,0 +1,{len(lineas_act)} @@\n"]
+                    diff.extend([f"+{line if line.endswith('\n') else line + '\n'}" for line in lineas_act])
                 else:
+                    # Archivo modificado
                     lineas_ant = contenido_anterior.splitlines(keepends=True)
+                    lineas_ant[-1] += "\n"
                     lineas_act = contenido_actual.splitlines(keepends=True)
+                    lineas_act[-1] += "\n\n"
+                    diff = list(difflib.unified_diff(
+                        lineas_ant,
+                        lineas_act,
+                        fromfile=f"a/{file}",
+                        tofile=f"b/{file}"
+                    ))
 
                 # Calcular Diff con difflib
                 diff = list(difflib.unified_diff(
@@ -146,11 +135,8 @@ class ServicioVersionado:
                     tofile=f"b/{file}"
                 ))
 
-                if diff or contenido_anterior is None:
-                    # El archivo cambió o es totalmente nuevo
-                    if not diff and contenido_anterior is None:
-                        diff = [f"--- a/{file}\n", f"+++ b/{file}\n", "@@ -0,0 +1,{} @@\n".format(len(lineas_act))] + [f"+{l}" for l in lineas_act]
-
+                    
+                if diff:
                     cambios.append({
                         "id_archivo": id_archivo,
                         "nombre": file,
@@ -158,7 +144,6 @@ class ServicioVersionado:
                         "ruta_abs": ruta_abs,
                         "es_nuevo": contenido_anterior is None
                     })
-
                     lineas_diff_totales.extend(diff)
                     lineas_diff_totales.append("\n") # Espacio entre archivos
 
@@ -170,6 +155,9 @@ class ServicioVersionado:
             raise Exception("El mensaje de commit es obligatorio.")
         if not lista_archivos:
             raise Exception("No hay archivos seleccionados para hacer commit.")
+
+        rama_obj = self.dao.obtener_rama_activa(id_proyecto)
+        id_rama = rama_obj.id
 
         proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
         if not proyecto: raise Exception("Proyecto no válido.")
@@ -185,18 +173,31 @@ class ServicioVersionado:
             ruta_abs = item['ruta_abs']
             if not os.path.exists(ruta_abs): continue
 
-            with open(ruta_abs, 'rb') as f:
-                contenido_bytes = f.read()
-                hash_ver = hashlib.sha1(contenido_bytes).hexdigest()
+            if ruta_abs and os.path.exists(ruta_abs):
+                with open(ruta_abs, 'rb') as f:
+                    contenido_bytes = f.read()
+                    hash_ver = hashlib.sha1(contenido_bytes).hexdigest()
+            else:
+                timestamp_base = f"{item.get('nombre')}-{datetime.datetime.now().isoformat()}"
+                hash_ver = hashlib.sha1(timestamp_base.encode()).hexdigest()
+
+            # Verificación de Unicidad de Hash en el Proyecto
+            if self.dao.existe_hash_version_en_proyecto(id_proyecto, hash_ver):
+                # Si el contenido exacto produce un hash existente, agregamos una sal temporal para garantizar unicidad SHA-1
+                sal_tiempo = datetime.datetime.now().isoformat().encode('utf-8')
+                hash_ver = hashlib.sha1(hash_ver.encode('utf-8') + sal_tiempo).hexdigest()
 
             ruta_zip = os.path.join(carpeta_commits, f"{hash_ver}.zip")
             with zipfile.ZipFile(ruta_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.write(ruta_abs, arcname=item['nombre'])
 
             id_version = self.dao.insertar_version_archivo(
-                item['id_archivo'], id_usuario, hash_ver, mensaje, descripcion, ruta_zip
+                item['id_archivo'], id_usuario, hash_ver, mensaje, descripcion, ruta_zip, id_rama
             )
             if id_version:
                 versiones_creadas.append(id_version)
 
         return len(versiones_creadas) > 0
+
+    def obtener_historial_proyecto(self, id_proyecto):
+        return self.dao.obtener_historial_commits_proyecto(id_proyecto)
