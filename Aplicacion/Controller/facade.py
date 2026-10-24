@@ -78,8 +78,8 @@ class MiniGitFacade:
     def escanean_y_calcular_diferencias(self, id_proyecto, ruta_proyecto):
         return self.srv_versionado.escanean_y_calcular_diferencias(id_proyecto, ruta_proyecto)
 
-    def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion = None):
-        return self.srv_versionado.crear_commit_completo(id_proyecto, id_usuario, lista_archivos, mensaje, descripcion)
+    def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion = None, diff_texto=""):
+        return self.srv_versionado.crear_commit_completo(id_proyecto, id_usuario, lista_archivos, mensaje, descripcion, diff_texto)
 
     # --- Historial ---
     def obtener_historial_proyecto(self, id_proyecto):
@@ -91,10 +91,3 @@ class MiniGitFacade:
 
     def asignar_etiqueta_a_version(self, id_version, id_etiqueta):
         return self.srv_etiquetas.asignar_etiqueta_a_version(id_version, id_etiqueta)
-
-    
-
-if __name__ == "__main__":
-    print("Iniciando capa Facade de Mini-Git separada en módulos.")
-    app = MiniGitFacade()
-    print("Módulos cargados con éxito. La base de datos y la interfaz gráfica pueden comenzar a consumir las funciones.")

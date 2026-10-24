@@ -17,7 +17,7 @@ class ServicioProyectos:
         # 1. Crear carpeta física
         if not os.path.exists(ruta_proyecto):
             os.makedirs(ruta_proyecto)
-            print(f"Carpeta física creada: {ruta_proyecto}")
+            #print(f"Carpeta física creada: {ruta_proyecto}")
         else:
             raise Exception("Ya existe una carpeta con ese nombre en el servidor local.")
 
@@ -38,10 +38,10 @@ class ServicioProyectos:
         
         if proyecto:
             # 1. Eliminar carpeta física
-            ruta_proyecto = os.path.join(self.ruta_base, proyecto.nombre)
+            ruta_proyecto = os.path.join(proyecto.ruta, proyecto.nombre)
             if os.path.exists(ruta_proyecto):
                 shutil.rmtree(ruta_proyecto)
-                print(f"Se eliminó el directorio físico: {ruta_proyecto}")
+                #print(f"Se eliminó el directorio físico: {ruta_proyecto}")
                 
         # 2. Eliminar de la BD
         return self.dao.eliminar_proyecto(id_proyecto) is not None

@@ -141,41 +141,50 @@ class RepositoriosDAO:
         return [Archivo(a['id'], a['id_proyecto'], a['id_tipo'], a['nombre'], a['fecha_creacion']) for a in res]
 
     def obtener_ultima_version_archivo(self, id_archivo):
-        q = "SELECT * FROM versiones_archivo WHERE id_archivo = %s ORDER BY fecha DESC LIMIT 1;"
+        q = """
+            SELECT va.id, va.id_archivo, e.id_usuario, e.hash_version, e.mensaje, e.descripcion,
+                   e.contenido_comprimido, e.fecha, e.id_rama
+            FROM versiones_archivo va
+            INNER JOIN etiquetas e ON va.id_etiqueta = e.id
+            WHERE va.id_archivo = %s
+            ORDER BY e.fecha DESC, va.id DESC LIMIT 1;
+        """
         res = self._ejecutar(q, (id_archivo,), fetch=True)
         if res:
             v = res[0]
-            return VersionArchivo(v['id'], v['id_archivo'], v['id_usuario'], v['hash_version'], v['mensaje'], v['contenido_comprimido'], v['fecha'])
+            return VersionArchivo(v['id'], v['id_archivo'], v['id_usuario'], v['hash_version'], v['mensaje'], v.get('descripcion'), v['contenido_comprimido'], v['fecha'], v.get('id_rama'))
         return None
 
-    def insertar_version_archivo(self, id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama):
-        q = """INSERT INTO versiones_archivo 
-               (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama) 
-               VALUES (%s, %s, %s, %s, %s, %s, %s);"""
-        return self._ejecutar(q, (id_archivo, id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama))
+    def insertar_version_archivo(self, id_archivo, id_etiqueta):
+        """
+        Inserta un registro en 'versiones_archivos' relacionando el archivo con la 'etiqueta' del commit.
+        """
+        q = "INSERT INTO versiones_archivo (id_archivo, id_etiqueta) VALUES (%s, %s);"
+        return self._ejecutar(q, (id_archivo, id_etiqueta))
 
     #Funciones auxiliares
     def contar_commits_totales_usuario(self, id_usuario):
-        """Cuenta todos los commits realizados en proyectos del usuario."""
+        """
+        Cuenta la cantidad real de commits únicos realizados por el usuario basándose en 'etiqueta'.
+        """
         q = """
-            SELECT COUNT(v.id) as total
-            FROM versiones_archivo v
-            JOIN archivos a ON v.id_archivo = a.id
-            JOIN proyectos p ON a.id_proyecto = p.id
+            SELECT COUNT(DISTINCT e.id) AS total 
+            FROM etiquetas e
+            INNER JOIN versiones_archivo va ON e.id = va.id_etiqueta
+            INNER JOIN archivos a ON va.id_archivo = a.id
+            INNER JOIN proyectos p ON a.id_proyecto = p.id
             WHERE p.id_usuario = %s;
         """
         res = self._ejecutar(q, (id_usuario,), fetch=True)
-        if res and len(res) > 0 and res[0]['total'] is not None:
-            return res[0]['total']
-        return 0
+        return res[0]['total'] if res else 0
 
     def obtener_ultima_fecha_commit(self, id_proyecto):
         """Obtiene la fecha del último commit realizado en el proyecto."""
         q = """
-            SELECT MAX(v.fecha) as ultima_fecha
-            FROM versiones_archivo v
-            JOIN archivos a ON v.id_archivo = a.id
-            WHERE a.id_proyecto = %s;
+            SELECT e.fecha as ultima_fecha FROM etiquetas e
+            INNER JOIN versiones_archivo va ON e.id = va.id_etiqueta
+            INNER JOIN archivos a ON va.id_archivo = a.id
+            WHERE a.id_proyecto = %s ORDER BY e.fecha DESC LIMIT 1;
         """
         res = self._ejecutar(q, (id_proyecto,), fetch=True)
         if res and len(res) > 0 and res[0]['ultima_fecha']:
@@ -236,9 +245,16 @@ class RepositoriosDAO:
         return False
 
     # --- Etiquetas ---
-    def insertar_etiqueta(self, id_proyecto, nombre, descripcion):
-        q = "INSERT INTO etiquetas (id_proyecto, nombre, descripcion) VALUES (%s, %s, %s);"
-        return self._ejecutar(q, (id_proyecto, nombre, descripcion))
+    def insertar_etiqueta(self, id_usuario, hash_version, mensaje, descripcion, ruta_zip, id_rama):
+        """
+        Inserta los metadatos globales del commit en la tabla 'etiqueta'.
+        Retorna el id (PRIMARY KEY AUTO_INCREMENT) recién generado.
+        """
+        q = """
+            INSERT INTO etiquetas (id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama)
+            VALUES (%s, %s, %s, %s, %s, %s);
+        """
+        return self._ejecutar(q, (id_usuario, hash_version, mensaje, descripcion, ruta_zip, id_rama))
 
     def insertar_version_etiqueta(self, id_version, id_etiqueta):
         q = "INSERT INTO versiones_etiquetas (id_version, id_etiqueta) VALUES (%s, %s);"
@@ -246,22 +262,38 @@ class RepositoriosDAO:
 
     # --- Historial ---
     def obtener_historial_commits_proyecto(self, id_proyecto):
-        """Consulta el historial de commits de un proyecto con información de usuario y archivo."""
+        """
+        Consulta el historial de commits uniendo la tabla 'etiqueta' con 'versiones_archivo'
+        y concatenando los nombres de los archivos agrupados por commit.
+        """
         q = """
             SELECT 
-                v.id,
-                v.hash_version,
-                v.mensaje,
-                v.fecha,
-                u.nombre as autor,
-                a.nombre as nombre_archivo,
-                a.ruta_relativa,
-                r.nombre as rama
-            FROM versiones_archivo v
-            JOIN archivos a ON v.id_archivo = a.id
-            JOIN usuarios u ON v.id_usuario = u.id 
-            LEFT JOIN ramas r ON v.id_rama = r.id 
+                e.id AS id,
+                e.hash_version,
+                e.mensaje,
+                e.descripcion,
+                e.fecha,
+                e.contenido_comprimido,
+                u.nombre AS autor,
+                r.nombre AS rama,
+                GROUP_CONCAT(DISTINCT a.nombre SEPARATOR ', ') AS nombre_archivo
+            FROM etiquetas e
+            INNER JOIN versiones_archivo va ON e.id = va.id_etiqueta
+            INNER JOIN archivos a ON va.id_archivo = a.id
+            INNER JOIN usuarios u ON e.id_usuario = u.id
+            LEFT JOIN ramas r ON e.id_rama = r.id
             WHERE a.id_proyecto = %s
-            ORDER BY v.fecha DESC;
+            GROUP BY e.id, e.hash_version, e.mensaje, e.descripcion, e.fecha, e.contenido_comprimido, u.nombre, r.nombre
+            ORDER BY e.fecha DESC;
         """
         return self._ejecutar(q, (id_proyecto,), fetch=True) or []
+
+    def existe_hash_version_en_proyecto(self, id_proyecto, hash_ver):
+        q = """
+            SELECT e.id FROM etiqueta e
+            INNER JOIN versiones_archivos va ON e.id = va.id_etiqueta
+            INNER JOIN archivos a ON va.id_archivo = a.id
+            WHERE a.id_proyecto = %s AND e.hash_version = %s LIMIT 1;
+        """
+        res = self._ejecutar(q, (id_proyecto, hash_ver), fetch=True)
+        return len(res) > 0 if res else False

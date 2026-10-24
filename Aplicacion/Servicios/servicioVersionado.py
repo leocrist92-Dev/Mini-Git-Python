@@ -150,7 +150,7 @@ class ServicioVersionado:
         diff_texto = "".join(lineas_diff_totales) if lineas_diff_totales else "No se detectaron cambios en los archivos del proyecto."
         return {"cambios": cambios, "diff_texto": diff_texto}
 
-    def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion):
+    def crear_commit_completo(self, id_proyecto, id_usuario, lista_archivos, mensaje, descripcion, diff_texto):
         if not mensaje.strip():
             raise Exception("El mensaje de commit es obligatorio.")
         if not lista_archivos:
@@ -163,41 +163,48 @@ class ServicioVersionado:
         if not proyecto: raise Exception("Proyecto no válido.")
 
         ruta_completa = os.path.join(proyecto.ruta, proyecto.nombre)
-        print(f"Ruta project: {ruta_completa}")
+        
         carpeta_commits = os.path.join(ruta_completa, ".commits")
         if not os.path.exists(carpeta_commits):
             os.makedirs(carpeta_commits)
 
         versiones_creadas = []
+        # 1. Generar un Hash único global para el Commit
+        timestamp = datetime.datetime.now().isoformat()
+        cadena_commit = f"{id_proyecto}-{id_usuario}-{timestamp}-{mensaje}"
+        hash_commit = hashlib.sha1(cadena_commit.encode('utf-8')).hexdigest()
+
+        # 2. Archivo ZIP único para todo el commit
+        ruta_zip = os.path.join(carpeta_commits, f"{hash_commit}.zip")
+
+        with zipfile.ZipFile(ruta_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Empaquetar cada archivo modificado/nuevo en el ZIP
+            for item in lista_archivos:
+                ruta_abs = item['ruta_abs']
+                if os.path.exists(ruta_abs):
+                    arc_name = item.get('ruta_relativa', item['nombre'])
+                    zf.write(ruta_abs, arcname=arc_name)
+
+            # Empaquetar el diff dentro de la carpeta virtual 'diff/diff.txt'
+            if diff_texto:
+                zf.writestr('diff/diff.txt', diff_texto)
+
+        # 3. Insertar única cabecera del commit en la tabla 'etiqueta'
+        id_etiqueta = self.dao.insertar_etiqueta(
+            id_usuario, hash_commit, mensaje, descripcion, ruta_zip, id_rama
+        )
+
+        if not id_etiqueta:
+            raise Exception("Error al insertar el registro de commit en la tabla 'etiqueta'.")
+
+        # 4. Registrar la relación en 'versiones_archivos' para cada archivo
+        archivos_guardados = 0
         for item in lista_archivos:
-            ruta_abs = item['ruta_abs']
-            if not os.path.exists(ruta_abs): continue
+            res = self.dao.insertar_version_archivo(item['id_archivo'], id_etiqueta)
+            if res:
+                archivos_guardados += 1
 
-            if ruta_abs and os.path.exists(ruta_abs):
-                with open(ruta_abs, 'rb') as f:
-                    contenido_bytes = f.read()
-                    hash_ver = hashlib.sha1(contenido_bytes).hexdigest()
-            else:
-                timestamp_base = f"{item.get('nombre')}-{datetime.datetime.now().isoformat()}"
-                hash_ver = hashlib.sha1(timestamp_base.encode()).hexdigest()
-
-            # Verificación de Unicidad de Hash en el Proyecto
-            if self.dao.existe_hash_version_en_proyecto(id_proyecto, hash_ver):
-                # Si el contenido exacto produce un hash existente, agregamos una sal temporal para garantizar unicidad SHA-1
-                sal_tiempo = datetime.datetime.now().isoformat().encode('utf-8')
-                hash_ver = hashlib.sha1(hash_ver.encode('utf-8') + sal_tiempo).hexdigest()
-
-            ruta_zip = os.path.join(carpeta_commits, f"{hash_ver}.zip")
-            with zipfile.ZipFile(ruta_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
-                zf.write(ruta_abs, arcname=item['nombre'])
-
-            id_version = self.dao.insertar_version_archivo(
-                item['id_archivo'], id_usuario, hash_ver, mensaje, descripcion, ruta_zip, id_rama
-            )
-            if id_version:
-                versiones_creadas.append(id_version)
-
-        return len(versiones_creadas) > 0
+        return archivos_guardados > 0
 
     def obtener_historial_proyecto(self, id_proyecto):
         return self.dao.obtener_historial_commits_proyecto(id_proyecto)

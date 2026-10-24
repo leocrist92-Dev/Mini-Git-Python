@@ -240,27 +240,33 @@ class HU001_Login(BaseFrame):
         password = self.pass_input.get().strip()
         
         self.login_btn.config(text="Verificando...", state="disabled")
-        self.show_toast("Validando credenciales contra el servicio de autenticación...", "info")
+        #self.show_toast("Validando credenciales contra el servicio de autenticación...", "info")
+        #self.after(1000, self.hide_toast())
         
         try:
             # Llamada directa al método de autenticación del Facade
             usuario = self.controller.facade.autenticar(correo, password)
             if usuario:
                 self.controller.set_usuario_actual(usuario)
-                self.show_toast("✓ Inicio de sesión exitoso.", "success")
+                #self.show_toast("✓ Inicio de sesión exitoso.", "success")
                 self.user_input.delete(0, "end")
                 self.pass_input.delete(0, "end")
                 self.login_btn.config(text="Ingresar")
+                #self.after(1400, self.hide_toast())
                 self.controller.show_frame("HU009_ListarRepositorios")
             else:
-                self.show_toast("✗ Credenciales inválidas.", "error")
+                #self.show_toast("✗ Credenciales inválidas.", "error")
                 self.login_btn.config(text="Ingresar", state="normal")
+                #self.after(1400, self.hide_toast())
         except Exception as e:
-            self.show_toast(f"Error al autenticar: {e}", "error")
+            #self.show_toast(f"Error al autenticar: {e}", "error")
             self.login_btn.config(text="Ingresar", state="normal")
+            #self.after(1400, self.hide_toast())
             
     def recover_pass(self):
-        self.show_toast("✓ Enlace enviado. Revisa tu bandeja de entrada.", "success")
+        pass
+        #self.show_toast("✓ Enlace enviado. Revisa tu bandeja de entrada.", "success")
+        #self.after(1500, self.hide_toast())
 
 class HU002_Registro(BaseFrame):
     def __init__(self, parent, controller):
@@ -337,19 +343,25 @@ class HU002_Registro(BaseFrame):
         try:
             res = self.controller.facade.registrar(nombre, email, usuario, password)
             if res:
-                self.show_toast("✓ Cuenta creada con éxito en la base de datos.", "success")
+                #self.show_toast("✓ Cuenta creada con éxito en la base de datos.", "success")
                 for ent in self.inputs.values(): ent.delete(0, 'end')
                 for lbl in self.helps.values(): lbl.config(text="")
                 self.terms_var.set(False)
+                #self.after(1400, self.hide_toast())
                 self.controller.show_frame("HU001_Login")
             else:
-                self.show_toast("✗ No se pudo registrar la cuenta.", "error")
+                pass
+                #self.show_toast("✗ No se pudo registrar la cuenta.", "error")
+                #self.after(1400, self.hide_toast())
         except Exception as e:
-            self.show_toast(f"Error al registrar usuario: {e}", "error")
+            pass
+            #self.show_toast(f"Error al registrar usuario: {e}", "error")
+            #self.after(1400, self.hide_toast())
         #self.show_toast("✓ Cuenta creada. Se envió correo de confirmación.", "success")
         for ent in self.inputs.values(): ent.delete(0, 'end')
         for lbl in self.helps.values(): lbl.config(text="")
         self.terms_var.set(False)
+        #self.hide_toast()
 
 class HU009_ListarRepositorios(BaseFrame):
     def __init__(self, parent, controller):
@@ -384,7 +396,7 @@ class HU009_ListarRepositorios(BaseFrame):
             self.repos = self.controller.facade.listar_proyectos_usuario(user_id)
             total_commits = self.controller.facade.contar_commits_totales_usuario(user_id)
         except Exception as e:
-            self.show_toast(f"Error cargando repositorios: {e}", "error")
+            #self.show_toast(f"Error cargando repositorios: {e}", "error")
             self.repos = []
             total_commits = 0
 
@@ -392,6 +404,7 @@ class HU009_ListarRepositorios(BaseFrame):
         total_repos = len(self.repos)
         privados = sum(1 for r in self.repos if r.visibilidad.lower() == "privado")
         publicos = total_repos - privados
+        #self.hide_toast()
 
         stats_frame = ttk.Frame(content, style='App.TFrame')
         stats_frame.pack(fill="x", pady=(0, 20))
@@ -447,7 +460,7 @@ class HU009_ListarRepositorios(BaseFrame):
     def apply_filters(self):
         """Filtra la lista de repositorios según el término de búsqueda y la visibilidad."""
         search_text = self.search_var.get().strip().lower()
-        selected_vis = self.filter_vis_var.get()
+        selected_vis = self.filter_vis_var.get().replace("ú","u")
 
         self.filtered_repos = []
         for repo in self.repos:
@@ -736,13 +749,16 @@ class HU003_CrearRepo(BaseFrame):
                 user_id, nombre, descripcion, self.folder_selected, self.priv_var.get()
             )
             if nuevo:
-                self.show_toast(
-                    f"✓ Repositorio '{nombre}' creado con éxito.", "success"
-                )
+                #self.show_toast(
+                #    f"✓ Repositorio '{nombre}' creado con éxito.", "success"
+                #)
+                #self.after(1400, self.hide_toast())
                 self.after(1500, self.controller.show_frame("HU009_ListarRepositorios"))
                 #self.controller.show_frame("HU009_ListarRepositorios")
         except Exception as e:
-            self.show_toast(f"Error al crear repositorio: {e}", "error")
+            pass
+            #self.show_toast(f"Error al crear repositorio: {e}", "error")
+            #self.after(1400, self.hide_toast())
 
 class HU004_Commit(BaseFrame):
     def __init__(self, parent, controller):
@@ -750,6 +766,7 @@ class HU004_Commit(BaseFrame):
         self.build_nav()
         self.cambios_detectados = []
         self.check_vars = {}
+        self.diff_texto_actual = ""
 
     def on_show(self):
         for widget in self.winfo_children():
@@ -892,6 +909,7 @@ class HU004_Commit(BaseFrame):
         res = self.controller.facade.escanean_y_calcular_diferencias(id_proyecto, ruta_proyecto)
         self.cambios_detectados = res.get("cambios", [])
         diff_texto = res.get("diff_texto", "")
+        self.diff_texto_actual = diff_texto
 
         self.check_vars = {}
         if not self.cambios_detectados:
@@ -924,7 +942,8 @@ class HU004_Commit(BaseFrame):
 
     def agregar_archivos_externos(self, ruta_proyecto):
         if not ruta_proyecto or not os.path.exists(ruta_proyecto):
-            self.show_toast("No existe la carpeta del proyecto en disco.", "error")
+            #self.show_toast("No existe la carpeta del proyecto en disco.", "error")
+            #self.after(1000, self.hide_toast())
             return
 
         archivos_sel = filedialog.askopenfilenames(title="Seleccionar archivos para el proyecto")
@@ -939,13 +958,15 @@ class HU004_Commit(BaseFrame):
 
             repo = self.controller.proyecto_actual
             self.cargar_cambios(repo.id, ruta_proyecto)
-            self.show_toast("Archivos agregados al directorio del proyecto.", "info")
+            #self.show_toast("Archivos agregados al directorio del proyecto.", "info")
+            ##self.after(1400, self.hide_toast())
 
     def ejecutar_commit(self, id_proyecto):
         mensaje = self.ent_msg.get().strip()
         descripcionOp = self.desc_msg.get("1.0", "end-1c").strip()
         if not mensaje:
-            self.show_toast("Escribe un mensaje descriptivo para el commit.", "error")
+            #self.show_toast("Escribe un mensaje descriptivo para el commit.", "error")
+            #self.after(1400, self.hide_toast())
             return
 
         archivos_a_commitear = [
@@ -953,21 +974,25 @@ class HU004_Commit(BaseFrame):
         ]
 
         if not archivos_a_commitear:
-            self.show_toast("Selecciona al menos un archivo para incluir en el commit.", "error")
+            #self.show_toast("Selecciona al menos un archivo para incluir en el commit.", "error")
+            #self.after(1400, self.hide_toast())
             return
 
         user_id = self.controller.usuario_actual.id
         try:
-            exito = self.controller.facade.crear_commit_completo(id_proyecto, user_id, archivos_a_commitear, mensaje, descripcionOp)
+            exito = self.controller.facade.crear_commit_completo(id_proyecto, user_id, archivos_a_commitear, mensaje, descripcionOp, self.diff_texto_actual)
             if exito:
                 #self.show_toast("¡Commit realizado con éxito!", "info")
+                #self.after(1000, self.hide_toast())
                 self.controller.show_frame("HU009_ListarRepositorios")
             else:
                 pass
                 #self.show_toast("No se pudo completar el commit.", "error")
+                #self.after(1400, self.hide_toast())
         except Exception as e:
             pass
             #self.show_toast(f"Error al hacer commit: {e}", "error")
+            #self.after(1400, self.hide_toast())
 
     def toggle_diff(self):
             if self.diff_visible:
@@ -981,13 +1006,15 @@ class HU004_Commit(BaseFrame):
         self.controller.show_frame("HU009_ListarRepositorios")
         
     def save_commit(self):
-        self.show_toast("✓ Commit guardado exitosamente. Hash: a1b2c3d4e5f6", "success")
+        #self.show_toast("✓ Commit guardado exitosamente. Hash: a1b2c3d4e5f6", "success")
+        #self.after(1400, self.hide_toast())
         self.msg.delete(0, 'end')
         self.desc.delete("1.0", "end")
         self.btn_save.config(state="disabled")
         
     def discard(self):
-        self.show_toast("Cambios descartados. Ya no hay archivos pendientes.", "error")
+        #self.show_toast("Cambios descartados. Ya no hay archivos pendientes.", "error")
+        #self.after(1400, self.hide_toast())
         self.msg.delete(0, 'end')
         self.desc.delete("1.0", "end")
 
@@ -1041,7 +1068,7 @@ class HU005_Historial(BaseFrame):
         stats_frame.pack(fill="x", pady=(0, 15))
 
         autores_unicos_n = len(set(c['autor'] for c in self.commits if 'autor' in c and c['autor']))
-        autores_unicos = list(c['autor'] for c in self.commits if 'autor' in c and c['autor'])
+        #autores_unicos = list(c['autor'] for c in self.commits if 'autor' in c and c['autor'] and c not in autores_unicos)
         ult_fecha = self.commits[0]['fecha'] if self.commits else None
         
         stats = [("Total Commits", "345", self.controller.colors["blue"]), 
@@ -1065,7 +1092,12 @@ class HU005_Historial(BaseFrame):
         filter_bar.pack(fill="x", pady=5)
 
         autores_disponibles = ["Todos"]
-        autores_disponibles += autores_unicos
+        # Extracción dinámica de autores para el combobox
+        for c in self.commits:
+            r = c.get('autor') if isinstance(c, dict) else getattr(c, 'autor', None)
+            if r and r not in autores_disponibles:
+                autores_disponibles.append(r)
+        
         ttk.Label(filter_bar, text="Autor:", style='App.TLabel').pack(side="left")
         self.author_combo = ttk.Combobox(filter_bar, textvariable=self.autor_var, values=autores_disponibles, state="readonly", width=15)
         self.author_combo.current(0)
@@ -1241,14 +1273,6 @@ class HU005_Historial(BaseFrame):
             ))
 
     def on_select_commit(self, event):
-        """selected = self.tree.selection()
-        if not selected:
-            return
-        item_vals = self.tree.item(selected[0], "values")
-        if item_vals:
-            self.lbl_commit_info.config(
-                text=f"Hash: {item_vals[0]} | Autor: {item_vals[2]} | Rama: {item_vals[3]} | Fecha: {item_vals[4]}\nMensaje: {item_vals[1]}"
-            )"""
         selected = self.tree.selection()
         if not selected:
             return
@@ -1275,6 +1299,7 @@ class HU005_Historial(BaseFrame):
             self.txt_msg.insert(tk.END, msg)
             self.txt_msg.config(state="disabled")
 
+            # LECTURA DEL DIFF DIRECTAMENTE DESDE DIFF/DIFF.TXT DENTRO DEL ZIP DEL COMMIT
             # Renderizar el Diff con sintaxis de líneas añadidas y eliminadas (Estilo ventana crear commit)
             self.txt_diff.config(state="normal")
             self.txt_diff.delete("1.0", tk.END)
@@ -1282,6 +1307,7 @@ class HU005_Historial(BaseFrame):
             lineas_diff = []
             
             # Intentar extraer o construir las líneas de cambio del archivo del commit
+            """
             if zip_path and os.path.exists(zip_path):
                 try:
                     with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -1293,6 +1319,28 @@ class HU005_Historial(BaseFrame):
                                 f"+++ b/{archivo}\n",
                                 f"@@ -0,0 +1,{len(contenido.splitlines())} @@\n"
                             ] + [f"+{linea}\n" for linea in contenido.splitlines()]
+                except Exception as e:
+                    lineas_diff = []
+            """
+            # LECTURA DE LA SUB-CARPETA VIRTUAL 'diff/diff.txt' DENTRO DEL UNICO ZIP
+            if zip_path and os.path.exists(zip_path):
+                try:
+                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        print(zf.namelist())
+                        # 1. Verificar si existe la entrada diff/diff.txt en el ZIP
+                        if "diff/diff.txt" in zf.namelist():
+                            contenido_diff = zf.read("diff/diff.txt").decode('utf-8', errors='replace')
+                            lineas_diff = [line + '\n' for line in contenido_diff.splitlines()]
+                        else:
+                            # Fallback para commits antiguos sin diff/diff.txt
+                            archivos_zip = [f for f in zf.namelist() if not f.startswith("diff/")]
+                            if archivos_zip:
+                                contenido = zf.read(archivos_zip[0]).decode('utf-8', errors='replace')
+                                lineas_diff = [
+                                    f"--- a/{archivo}\n",
+                                    f"+++ b/{archivo}\n",
+                                    f"@@ -0,0 +1,{len(contenido.splitlines())} @@\n"
+                                ] + [f"+{linea}\n" for linea in contenido.splitlines()]
                 except Exception as e:
                     lineas_diff = []
 
@@ -1508,10 +1556,25 @@ class HU008_Merge(BaseFrame):
 class HU010_EliminarRepo(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
-        self.build_nav()
+
+    def on_show(self):
+        for widget in self.winfo_children():
+            widget.destroy()
+
         
         box = ttk.Frame(self, style='Panel.TFrame', padding=30)
         box.pack(pady=40, fill="x", padx=40)
+
+        repo = self.controller.proyecto_actual
+        if not repo:
+            ttk.Label(box, text="⚠️ No hay ningún repositorio seleccionado.", font=("Segoe UI", 12, "bold"), foreground=self.controller.colors["warn"], background=self.controller.colors["panel"]).pack(pady=20)
+            ttk.Button(box, text="Volver al Listado de Repositorios", style="Primary.TButton", command=lambda: self.controller.show_frame("HU009_ListarRepositorios")).pack()
+            return
+
+        self.r_id = repo.get("id") if isinstance(repo, dict) else getattr(repo, "id", 1)
+        self.r_nombre = repo.get("nombre") if isinstance(repo, dict) else getattr(repo, "nombre", "Repositorio")
+        self.r_ruta = repo.get("ruta", "") if isinstance(repo, dict) else getattr(repo, "ruta", "")
+        self.rama_act = self.controller.facade.obtener_rama_activa(self.r_id)
         
         # Opciones extra de Backup antes del peligro
         safe_zone = ttk.Frame(box, style='Panel.TFrame')
@@ -1529,31 +1592,44 @@ class HU010_EliminarRepo(BaseFrame):
         # Zona de Peligro
         ttk.Label(box, text="Zona de Peligro", font=("Segoe UI", 16, "bold"), foreground=self.controller.colors["red"], background=self.controller.colors["panel"]).pack(anchor="w")
         
-        ttk.Label(box, text="Repositorio a eliminar: mi-proyecto-python", font=("Segoe UI", 11, "bold"), foreground=self.controller.colors["text"], background=self.controller.colors["panel"]).pack(anchor="w", pady=(10, 5))
+        ttk.Label(box, text=f"Repositorio a eliminar: '{self.r_nombre}'", font=("Segoe UI", 11, "bold"), foreground=self.controller.colors["text"], background=self.controller.colors["panel"]).pack(anchor="w", pady=(10, 5))
         
-        ttk.Label(box, text="Rama actual: main", style='Chip.TLabel').pack(anchor="w", pady=5)
+        ttk.Label(box, text=f"Rama actual: {self.rama_act.nombre}", style='Chip.TLabel').pack(anchor="w", pady=5)
         ttk.Label(box, text="Esta acción es irreversible. Se eliminará el código de todas las ramas, el historial de commits y las configuraciones.", style='Panel.TLabel').pack(anchor="w", pady=5)
-        ttk.Label(box, text="Para confirmar, escribe: mi-proyecto-python", font=("Segoe UI", 10, "bold"), background=self.controller.colors["panel"], foreground=self.controller.colors["text"]).pack(anchor="w", pady=15)
+        ttk.Label(box, text=f"Para confirmar, escribe: {self.r_nombre}", font=("Segoe UI", 10, "bold"), background=self.controller.colors["panel"], foreground=self.controller.colors["text"]).pack(anchor="w", pady=15)
         
-        self.confirm = ttk.Entry(box, font=("Segoe UI", 11))
-        self.confirm.pack(fill="x", pady=5)
-        self.confirm.bind("<KeyRelease>", self.check)
+        self.confirm_entry = ttk.Entry(box, font=("Segoe UI", 11))
+        self.confirm_entry.pack(fill="x", pady=5)
+        self.confirm_entry.bind("<KeyRelease>", self.validar_confirmacion)
+
+        btn_box = ttk.Frame(box, style='Panel.TFrame')
+        btn_box.pack(fill="x")
         
-        self.del_btn = ttk.Button(box, text="Eliminar Definitivamente", style='Danger.TButton', command=self.delete, state="disabled")
-        self.del_btn.pack(fill="x", pady=15)
+        self.del_btn = ttk.Button(btn_box, text="Eliminar Definitivamente", style='Danger.TButton', command=self.confirmar_eliminacion, state="disabled")
+        self.del_btn.pack(side="left", padx=(0, 10))
+
+        ttk.Button(
+            btn_box, 
+            text="Cancelar", 
+            style="Secondary.TButton", 
+            command=lambda: self.controller.show_frame("HU009_ListarRepositorios")
+        ).pack(side="left")
         
-    def check(self, event=None):
-        if self.confirm.get() == "mi-proyecto-python":
+    def validar_confirmacion(self, event=None):
+        if self.confirm_entry.get().strip() == self.r_nombre:
             self.del_btn.config(state="normal")
-            self.show_toast("✓ Nombre de confirmación correcto.", "success")
         else:
             self.del_btn.config(state="disabled")
-            
-    def delete(self):
-        if messagebox.askyesno("Seguridad Modal", "Estás a punto de eliminar permanentemente el repositorio.\n¿Estás completamente seguro?"):
-            self.show_toast("✓ Repositorio eliminado de forma permanente. Auditoría registrada.", "error")
-            self.confirm.delete(0, 'end')
-            self.del_btn.config(state="disabled")
+
+    def confirmar_eliminacion(self):
+        try:
+            self.controller.facade.eliminar_proyecto(self.r_id)
+            self.controller.set_proyecto_actual(None)
+            #self.show_toast(f"✓ El repositorio '{self.r_nombre}' ha sido eliminado.", "success")
+            self.controller.show_frame("HU009_ListarRepositorios")
+        except Exception as e:
+            pass
+            #self.show_toast(f"Error al eliminar repositorio: {e}", "error")
 
 # Ejecución
 if __name__ == "__main__":
