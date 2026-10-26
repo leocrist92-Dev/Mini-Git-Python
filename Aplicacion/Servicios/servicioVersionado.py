@@ -40,15 +40,46 @@ class ServicioVersionado:
         # En una impl. real leería el zip1 y zip2 y ejecutaría un diff
         return f"--- Version {id_version1}\n+++ Version {id_version2}\n@@ -1,2 +1,3 @@\n- Codigo viejo\n+ Codigo nuevo"
 
-    def crear_rama(self, id_proyecto, nombre_rama, id_version_base):
-        """Registra una nueva rama a partir de un punto en la historia."""
-        id_rama = self.dao.insertar_rama(id_proyecto, nombre_rama, id_version_base)
+    def crear_rama(self, id_proyecto, nombre_rama, id_version_base=None, activa='No'):
+        """
+        Crea una nueva rama validando que no existan duplicados.
+        Permite activarla directamente si el flag 'activa' es True.
+        """
+        if not nombre_rama or not nombre_rama.strip():
+            raise Exception("El nombre de la rama es obligatorio.")
+
+        nombre_clean = nombre_rama.strip()
+
+        # Validación de duplicado
+        ramas_existentes = self.obtener_ramas_proyecto(id_proyecto)
+        for r in ramas_existentes:
+            r_nombre = r.get('nombre') if isinstance(r, dict) else getattr(r, 'nombre', '')
+            if r_nombre.lower() == nombre_clean.lower():
+                raise Exception(f"Ya existe una rama con el nombre '{nombre_clean}' en este proyecto.")
+            
+        id_rama = self.dao.crear_rama(id_proyecto, nombre_rama, id_version_base, activa)
         if id_rama:
-            return Rama(id_rama, id_proyecto, nombre_rama, id_version_base)
+            return Rama(id_rama, id_proyecto, nombre_rama, id_version_base, None, activa)
         raise Exception("Error al generar la rama en BD.")
 
     def obtener_rama_activa(self, id_proyecto):
         return self.dao.obtener_rama_activa(id_proyecto)
+
+    def cambiar_rama_activa(self, id_proyecto, id_rama):
+        """
+        Cambia la rama activa del proyecto.
+        """
+        if not id_proyecto or not id_rama:
+            raise Exception("Parámetros no válidos para cambiar la rama activa.")
+        return self.dao.cambiar_rama_activa(id_proyecto, id_rama)
+
+    def obtener_ramas_proyecto(self, id_proyecto):
+        """
+        Consulta las ramas asociadas a un proyecto específico.
+        """
+        if not self.dao:
+            return []
+        return self.dao.obtener_ramas_proyecto(id_proyecto)
 
     def restaurar_version(self, id_proyecto, id_version):
         """Sobrescribe archivos físicos con los del backup de ese commit."""
@@ -208,3 +239,149 @@ class ServicioVersionado:
 
     def obtener_historial_proyecto(self, id_proyecto):
         return self.dao.obtener_historial_commits_proyecto(id_proyecto)
+
+    # --- MOTOR DE COMPARACIÓN DE VERSIONES (DIFF) ---
+    def _extraer_archivos_de_zip(self, ruta_zip):
+        """
+        Extrae y decodifica todos los archivos de código guardados en un ZIP de commit.
+        """
+        archivos = {}
+        if ruta_zip and os.path.exists(ruta_zip):
+            try:
+                with zipfile.ZipFile(ruta_zip, 'r') as zf:
+                    for nombre in zf.namelist():
+                        if not nombre.startswith("diff/"):
+                            contenido = zf.read(nombre).decode('utf-8', errors='replace')
+                            archivos[nombre] = contenido
+            except Exception as e:
+                print(f"Error leyendo paquete ZIP ({ruta_zip}): {e}")
+        return archivos
+
+    def comparar_versiones(self, id_etiqueta_a, id_etiqueta_b):
+        """
+        Compara dos versiones (commits) completas del proyecto.
+        Retorna una estructura con:
+        - raw_unified_diff: Texto plano en formato Unified Diff para la vista unificada.
+        - side_by_side: Estructura formateada línea por línea para la vista de dos paneles.
+        - stats: Métricas numéricas globales (archivos cambiados, adiciones, eliminaciones).
+        """
+        etiqueta_a = self.dao.obtener_etiqueta_por_id(id_etiqueta_a)
+        etiqueta_b = self.dao.obtener_etiqueta_por_id(id_etiqueta_b)
+
+        if not etiqueta_a or not etiqueta_b:
+            raise Exception("Una de las versiones seleccionadas no fue encontrada.")
+
+        archivos_a = self._extraer_archivos_de_zip(etiqueta_a['contenido_comprimido'])
+        archivos_b = self._extraer_archivos_de_zip(etiqueta_b['contenido_comprimido'])
+
+        todos_los_archivos = sorted(list(set(archivos_a.keys()) | set(archivos_b.keys())))
+
+        unified_lines = []
+        archivos_detalle = []
+
+        total_adiciones = 0
+        total_eliminaciones = 0
+        archivos_modificados_cnt = 0
+        archivos_nuevos_cnt = 0
+        archivos_eliminados_cnt = 0
+
+        for nombre_archivo in todos_los_archivos:
+            en_a = nombre_archivo in archivos_a
+            en_b = nombre_archivo in archivos_b
+
+            text_a = archivos_a.get(nombre_archivo, "")
+            text_b = archivos_b.get(nombre_archivo, "")
+
+            lines_a = text_a.splitlines()
+            lines_b = text_b.splitlines()
+
+            if text_a == text_b:
+                continue
+
+            archivos_modificados_cnt += 1
+            if not en_a and en_b:
+                estado = "nuevo"
+                archivos_nuevos_cnt += 1
+            elif en_a and not en_b:
+                estado = "eliminado"
+                archivos_eliminados_cnt += 1
+            else:
+                estado = "modificado"
+
+            # 1. Generar Unified Diff
+            diff_file_lines = list(difflib.unified_diff(
+                [l + '\n' for l in lines_a],
+                [l + '\n' for l in lines_b],
+                fromfile=f"a/{nombre_archivo}",
+                tofile=f"b/{nombre_archivo}"
+            ))
+            unified_lines.extend(diff_file_lines)
+            unified_lines.append("\n") # Espacio entre archivos
+
+            # 2. Generar Diff Lado a Lado (Side-by-Side)
+            matcher = difflib.SequenceMatcher(None, lines_a, lines_b)
+            side_by_side_lines = []
+            file_add = 0
+            file_sub = 0
+
+            idx_a, idx_b = 1, 1
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag == 'equal':
+                    for la, lb in zip(lines_a[i1:i2], lines_b[j1:j2]):
+                        side_by_side_lines.append((str(idx_a), la, 'normal', str(idx_b), lb, 'normal'))
+                        idx_a += 1
+                        idx_b += 1
+                elif tag == 'replace':
+                    len1 = i2 - i1
+                    len2 = j2 - j1
+                    for k in range(max(len1, len2)):
+                        num_a = str(idx_a) if k < len1 else ""
+                        val_a = lines_a[i1 + k] if k < len1 else ""
+                        st_a = 'modified' if k < len1 else 'empty'
+                        if k < len1:
+                            idx_a += 1
+                            file_sub += 1
+
+                        num_b = str(idx_b) if k < len2 else ""
+                        val_b = lines_b[j1 + k] if k < len2 else ""
+                        st_b = 'modified' if k < len2 else 'empty'
+                        if k < len2:
+                            idx_b += 1
+                            file_add += 1
+
+                        side_by_side_lines.append((num_a, val_a, st_a, num_b, val_b, st_b))
+                elif tag == 'delete':
+                    for la in lines_a[i1:i2]:
+                        side_by_side_lines.append((str(idx_a), la, 'deleted', "", "", 'empty'))
+                        idx_a += 1
+                        file_sub += 1
+                elif tag == 'insert':
+                    for lb in lines_b[j1:j2]:
+                        side_by_side_lines.append(("", "", 'empty', str(idx_b), lb, 'added'))
+                        idx_b += 1
+                        file_add += 1
+
+            total_adiciones += file_add
+            total_eliminaciones += file_sub
+
+            archivos_detalle.append({
+                "nombre": nombre_archivo,
+                "estado": estado,
+                "adiciones": file_add,
+                "eliminaciones": file_sub,
+                "side_by_side": side_by_side_lines
+            })
+
+        return {
+            "raw_unified_diff": "".join(unified_lines),
+            "archivos_detalle": archivos_detalle,
+            "stats": {
+                "archivos_modificados": archivos_modificados_cnt,
+                "archivos_nuevos": archivos_nuevos_cnt,
+                "archivos_eliminados": archivos_eliminados_cnt,
+                "adiciones": total_adiciones,
+                "eliminaciones": total_eliminaciones,
+                "commit_a": etiqueta_a,
+                "commit_b": etiqueta_b
+            }
+        }

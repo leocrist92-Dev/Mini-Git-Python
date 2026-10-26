@@ -84,7 +84,7 @@ class RepositoriosDAO:
         id_proyecto = self._ejecutar(q, (id_usuario, nombre, descripcion, ruta, visibilidad))
         if id_proyecto:
             # Crear la rama main por defecto para este proyecto
-            self.crear_rama(id_proyecto, "main")
+            self.crear_rama(id_proyecto, "main", None, 'Si')
         return id_proyecto
 
     def obtener_fecha_creacion(self, id_proyecto):
@@ -213,14 +213,10 @@ class RepositoriosDAO:
         res = self._ejecutar(q, (id_proyecto,), fetch=True)
         return [VersionArchivo(v['id'], v['id_archivo'], v['id_usuario'], v['hash_version'], v['mensaje'], v['contenido_comprimido'], v['fecha']) for v in res]
 
-    def insertar_rama(self, id_proyecto, nombre, id_version_base):
-        q = "INSERT INTO ramas (id_proyecto, nombre, id_version_base, activa) VALUES (%s, %s, %s, %s);"
-        return self._ejecutar(q, (id_proyecto, nombre, id_version_base, 'No'))
-
-    def crear_rama(self, id_proyecto, nombre_rama):
+    def crear_rama(self, id_proyecto, nombre_rama, id_version_base, activa):
         """Crea una nueva rama en la tabla 'ramas'."""
-        q = "INSERT INTO ramas (id_proyecto, nombre, activa) VALUES (%s, %s, %s);"
-        return self._ejecutar(q, (id_proyecto, nombre_rama, 'Si'))
+        q = "INSERT INTO ramas (id_proyecto, nombre, id_version_base, activa) VALUES (%s, %s, %s, %s);"
+        return self._ejecutar(q, (id_proyecto, nombre_rama, id_version_base, activa))
 
     def obtener_rama_activa(self, id_proyecto):
         """Obtiene el nombre de la rama activa principal para un proyecto."""
@@ -230,6 +226,33 @@ class RepositoriosDAO:
             r = res[0]
             return Rama(r['id'], r['id_proyecto'], r['nombre'], r['id_version_base'], r['fecha_creacion'], r['activa'])
         return None
+
+    def obtener_ramas_proyecto(self, id_proyecto):
+        """
+        Obtiene el listado completo de ramas pertenecientes a un proyecto.
+        """
+        q = """
+            SELECT id, id_proyecto, nombre, activa, fecha_creacion
+            FROM ramas
+            WHERE id_proyecto = %s
+            ORDER BY activa DESC, nombre ASC;
+        """
+        return self._ejecutar(q, (id_proyecto,), fetch=True) or []
+
+    def desactivar_todas_ramas_proyecto(self, id_proyecto):
+        """
+        Desactiva todas las ramas marcando activa = 0 para el proyecto indicado.
+        """
+        q = "UPDATE ramas SET activa = 'No' WHERE id_proyecto = %s;"
+        return self._ejecutar(q, (id_proyecto,))
+
+    def cambiar_rama_activa(self, id_proyecto, id_rama):
+        """
+        Establece la rama especificada como activa desmarcando las demás.
+        """
+        self.desactivar_todas_ramas_proyecto(id_proyecto)
+        q = "UPDATE ramas SET activa = 'Si' WHERE id = %s AND id_proyecto = %s;"
+        return self._ejecutar(q, (id_rama, id_proyecto))
 
     def existe_hash_version_en_proyecto(self, id_proyecto, hash_version):
         """Verifica si ya existe una versión con el mismo hash SHA-1 en el proyecto especifico."""
@@ -259,6 +282,21 @@ class RepositoriosDAO:
     def insertar_version_etiqueta(self, id_version, id_etiqueta):
         q = "INSERT INTO versiones_etiquetas (id_version, id_etiqueta) VALUES (%s, %s);"
         return self._ejecutar(q, (id_version, id_etiqueta))
+
+    def obtener_etiqueta_por_id(self, id_etiqueta):
+        """
+        Obtiene los datos completos de un commit desde la tabla 'etiqueta' por su ID.
+        """
+        q = """
+            SELECT e.id, e.id_usuario, e.hash_version, e.mensaje, e.descripcion,
+                   e.contenido_comprimido, e.fecha, e.id_rama, u.nombre AS autor, r.nombre AS rama
+            FROM etiquetas e
+            INNER JOIN usuarios u ON e.id_usuario = u.id
+            LEFT JOIN ramas r ON e.id_rama = r.id
+            WHERE e.id = %s LIMIT 1;
+        """
+        res = self._ejecutar(q, (id_etiqueta,), fetch=True)
+        return res[0] if res else None
 
     # --- Historial ---
     def obtener_historial_commits_proyecto(self, id_proyecto):
@@ -297,3 +335,5 @@ class RepositoriosDAO:
         """
         res = self._ejecutar(q, (id_proyecto, hash_ver), fetch=True)
         return len(res) > 0 if res else False
+
+    

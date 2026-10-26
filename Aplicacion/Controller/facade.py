@@ -65,8 +65,14 @@ class MiniGitFacade:
     def comparar_versiones(self, id_version1, id_version2):
         return self.srv_versionado.comparar_versiones(id_version1, id_version2)
 
-    def crear_rama(self, id_proyecto, nombre_rama, id_version_base):
-        return self.srv_versionado.crear_rama(id_proyecto, nombre_rama, id_version_base)
+    def crear_rama(self, id_proyecto, nombre_rama, id_version_base, activa):
+        return self.srv_versionado.crear_rama(id_proyecto, nombre_rama, id_version_base, activa)
+
+    def obtener_ramas_proyecto(self, id_proyecto):
+        return self.srv_versionado.obtener_ramas_proyecto(id_proyecto)
+
+    def cambiar_rama_activa(self, id_proyecto, id_rama):
+        return self.srv_versionado.cambiar_rama_activa(id_proyecto, id_rama)
 
     def obtener_rama_activa(self, id_proyecto):
         return self.srv_versionado.obtener_rama_activa(id_proyecto)
