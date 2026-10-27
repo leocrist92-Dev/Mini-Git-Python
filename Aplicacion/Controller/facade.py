@@ -65,6 +65,12 @@ class MiniGitFacade:
     def comparar_versiones(self, id_version1, id_version2):
         return self.srv_versionado.comparar_versiones(id_version1, id_version2)
 
+    def resolver_ruta_zip_valida(self, id_proyecto, ruta_zip_db, hash_version=None):
+        """
+        Delega la resolución dinámica de la ruta del archivo ZIP.
+        """
+        return self.srv_versionado.resolver_ruta_zip_valida(id_proyecto, ruta_zip_db, hash_version)
+
     def crear_rama(self, id_proyecto, nombre_rama, id_version_base, activa):
         return self.srv_versionado.crear_rama(id_proyecto, nombre_rama, id_version_base, activa)
 

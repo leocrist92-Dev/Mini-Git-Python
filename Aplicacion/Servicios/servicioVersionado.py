@@ -35,10 +35,7 @@ class ServicioVersionado:
             return ultima_fecha
         return fecha_creacion_defecto
 
-    def comparar_versiones(self, id_version1, id_version2):
-        """Simula diff leyendo archivos y generando +-"""
-        # En una impl. real leería el zip1 y zip2 y ejecutaría un diff
-        return f"--- Version {id_version1}\n+++ Version {id_version2}\n@@ -1,2 +1,3 @@\n- Codigo viejo\n+ Codigo nuevo"
+    
 
     def crear_rama(self, id_proyecto, nombre_rama, id_version_base=None, activa='No'):
         """
@@ -385,3 +382,40 @@ class ServicioVersionado:
                 "commit_b": etiqueta_b
             }
         }
+
+    def resolver_ruta_zip_valida(self, id_proyecto, ruta_zip_db, hash_version=None):
+        """
+        Resuelve de forma dinámica la ruta física de un archivo ZIP de commit.
+        Soporta rutas corruptas por codificación (tildes), barras mezcladas o proyectos movidos de carpeta.
+        """
+        if not ruta_zip_db and not hash_version:
+            return None
+
+        # 1. Probar la ruta guardada en BD normalizada
+        if ruta_zip_db:
+            ruta_norm = os.path.normpath(ruta_zip_db)
+            if os.path.exists(ruta_norm):
+                return ruta_norm
+
+        # 2. Si la ruta directa no existe, intentar reconstruirla dinámicamente desde el proyecto
+        if id_proyecto and self.dao and hasattr(self.dao, 'obtener_proyecto_por_id'):
+            try:
+                proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
+                if proyecto:
+                    nombre_zip = os.path.basename(ruta_zip_db) if ruta_zip_db else f"{hash_version}.zip"
+                    
+                    # Rutas posibles donde puede residir la carpeta .commits
+                    p_ruta = os.path.normpath(proyecto.ruta)
+                    candidatos = [
+                        os.path.join(p_ruta, proyecto.nombre, ".commits", nombre_zip),
+                        os.path.join(p_ruta, ".commits", nombre_zip),
+                    ]
+
+                    for cand in candidatos:
+                        cand_norm = os.path.normpath(cand)
+                        if os.path.exists(cand_norm):
+                            return cand_norm
+            except Exception as e:
+                print(f"Error al resolver la ruta dinámica del ZIP: {e}")
+
+        return None

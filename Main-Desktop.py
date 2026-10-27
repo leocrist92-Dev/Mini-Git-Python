@@ -1311,25 +1311,14 @@ class HU005_Historial(BaseFrame):
             self.txt_diff.delete("1.0", tk.END)
 
             lineas_diff = []
-            
-            # Intentar extraer o construir las líneas de cambio del archivo del commit
-            """
-            if zip_path and os.path.exists(zip_path):
-                try:
-                    with zipfile.ZipFile(zip_path, 'r') as zf:
-                        archivos_zip = zf.namelist()
-                        if archivos_zip:
-                            contenido = zf.read(archivos_zip[0]).decode('utf-8', errors='replace')
-                            lineas_diff = [
-                                f"--- a/{archivo}\n",
-                                f"+++ b/{archivo}\n",
-                                f"@@ -0,0 +1,{len(contenido.splitlines())} @@\n"
-                            ] + [f"+{linea}\n" for linea in contenido.splitlines()]
-                except Exception as e:
-                    lineas_diff = []
-            """
+            id_proyecto = getattr(self.controller.proyecto_actual, 'id', None) if self.controller.proyecto_actual else None
+
             # LECTURA DE LA SUB-CARPETA VIRTUAL 'diff/diff.txt' DENTRO DEL UNICO ZIP
-            if zip_path and os.path.exists(zip_path):
+            # Resolver la ruta dinámicamente usando el nuevo método
+            zip_valido = self.controller.facade.resolver_ruta_zip_valida(id_proyecto, zip_path, hash_f)
+            #zip_valido = os.path.normpath(zip_path)
+            #if zip_path and os.path.exists(zip_path):
+            if zip_valido and os.path.exists(zip_path):
                 try:
                     with zipfile.ZipFile(zip_path, 'r') as zf:
                         print(zf.namelist())

@@ -45,7 +45,7 @@ class ServicioUsuarios:
         pass_hash = self._hashear(password)
         nuevo_id = self.dao.insertar_usuario(nombre, correo, usuario, pass_hash)
         if nuevo_id:
-            return Usuario(nuevo_id, nombre, correo, pass_hash)
+            return Usuario(nuevo_id, nombre, correo, usuario, pass_hash)
         return None
 
     def listar_usuarios(self):

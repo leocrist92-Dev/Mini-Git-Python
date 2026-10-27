@@ -1,6 +1,6 @@
 class Usuario:
     """Modelo de dominio para los usuarios del sistema."""
-    def __init__(self, id, nombre, correo, nombre_usuario, password_hash, rol, estado="Activo"):
+    def __init__(self, id, nombre, correo, nombre_usuario, password_hash, rol=None, estado="Activo"):
         self.id = id
         self.nombre = nombre
         self.correo = correo
