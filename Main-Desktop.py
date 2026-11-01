@@ -376,7 +376,7 @@ class HU009_ListarRepositorios(BaseFrame):
         for widget in self.winfo_children():
             widget.destroy()
 
-        self.build_nav()
+        #self.build_nav()
 
         content = ttk.Frame(self, style='App.TFrame', padding=20)
         content.pack(fill="both", expand=True)
@@ -663,7 +663,7 @@ class HU009_ListarRepositorios(BaseFrame):
 class HU003_CrearRepo(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
-        self.build_nav()
+        #self.build_nav()
         
         box = ttk.Frame(self, style='Panel.TFrame', padding=30)
         box.pack(pady=20, fill="x", padx=40)
@@ -769,7 +769,7 @@ class HU003_CrearRepo(BaseFrame):
 class HU004_Commit(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
-        self.build_nav()
+        #self.build_nav()
         self.cambios_detectados = []
         self.check_vars = {}
         self.diff_texto_actual = ""
@@ -1038,7 +1038,7 @@ class HU005_Historial(BaseFrame):
             widget.destroy()
 
         self.search_var.set("")
-        self.build_nav()
+        #self.build_nav()
 
         content = ttk.Frame(self, style='App.TFrame', padding=20)
         content.pack(fill="both", expand=True)
@@ -1376,12 +1376,10 @@ class HU006_Diff(BaseFrame):
         for widget in self.winfo_children():
             widget.destroy()
 
-        self.build_nav()
+        #self.build_nav()
         
         content = ttk.Frame(self, style='App.TFrame', padding=20)
         content.pack(fill="both", expand=True)
-        
-        ttk.Label(content, text="Repositorio: mi-proyecto-python", font=("Segoe UI", 10, "bold"), foreground=self.controller.colors["muted"], background=self.controller.colors["bg"]).pack(anchor="w")
         
         top = ttk.Frame(content, style='App.TFrame')
         top.pack(fill="x", pady=(5, 10))
@@ -1640,7 +1638,7 @@ class HU007_Ramas(BaseFrame):
         for widget in self.winfo_children():
             widget.destroy()
 
-        self.build_nav()
+        #self.build_nav()
         
         content = ttk.Frame(self, style='App.TFrame', padding=20)
         content.pack(fill="both", expand=True)
@@ -1831,7 +1829,7 @@ class HU007_Ramas(BaseFrame):
 class HU008_Merge(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
-        self.build_nav()
+        #self.build_nav()
         
         box = ttk.Frame(self, style='Panel.TFrame', padding=30)
         box.pack(pady=20, fill="x", padx=40)

@@ -85,21 +85,66 @@ class ServicioVersionado:
         return True
 
     #para commit de todos los archivos
-    def obtener_contenido_ultimo_commit(self, id_archivo, ruta_zip):
-        if not ruta_zip or not os.path.exists(ruta_zip):
+    def obtener_contenido_ultimo_commit(self, id_archivo, ruta_zip, nombre_archivo=None, ruta_relativa=None, id_proyecto=None, hash_version=None):
+        """
+        Busca y extrae el contenido del archivo específico dentro del paquete ZIP
+        del último commit registrado para ese archivo.
+        """
+        ruta_valida = self.resolver_ruta_zip_valida(id_proyecto, ruta_zip, hash_version)
+        if not ruta_valida or not os.path.exists(ruta_valida):
+        #if not ruta_zip or not os.path.exists(ruta_zip):
             return None
         try:
-            with zipfile.ZipFile(ruta_zip, 'r') as zf:
-                archivos = zf.namelist()
-                if archivos:
-                    with zf.open(archivos[0]) as f:
-                        raw = f.read().decode('utf-8', errors='replace')
-                        return self.normalizar_texto(raw)
+            with zipfile.ZipFile(ruta_valida, 'r') as zf:
+                namelist = [n for n in zf.namelist() if not n.startswith("diff/")]
+                if not namelist:
+                    return None
+
+                target_entry = None
+
+                # Nombres candidatos a buscar dentro de la estructura interna del ZIP
+                candidatos = []
+                if ruta_relativa:
+                    candidatos.append(os.path.normpath(ruta_relativa).replace('\\', '/'))
+                if nombre_archivo:
+                    candidatos.append(os.path.normpath(nombre_archivo).replace('\\', '/'))
+
+                # 1. Buscar coincidencia exacta de nombre o ruta relativa
+                for cand in candidatos:
+                    for entry in namelist:
+                        entry_norm = os.path.normpath(entry).replace('\\', '/')
+                        if entry_norm == cand or os.path.basename(entry_norm) == os.path.basename(cand):
+                            target_entry = entry
+                            break
+                    if target_entry:
+                        break
+
+                # 2. Si no se encuentra, buscar por el nombre registrado en la BD para ese id_archivo
+                if not target_entry and self.dao and hasattr(self.dao, 'obtener_archivo_por_id'):
+                    arch_obj = self.dao.obtener_archivo_por_id(id_archivo)
+                    if arch_obj:
+                        nombre_bd = getattr(arch_obj, 'nombre', '') if not isinstance(arch_obj, dict) else arch_obj.get('nombre', '')
+                        for entry in namelist:
+                            if os.path.basename(entry) == os.path.basename(nombre_bd):
+                                target_entry = entry
+                                break
+
+                # Si el archivo no existe en el ZIP, no tomamos entradas ajenas
+                if not target_entry:
+                    return None
+
+                with zf.open(target_entry) as f:
+                    raw = f.read().decode('utf-8', errors='replace')
+                    return self.normalizar_texto(raw)
         except Exception as e:
             print(f"Error leyendo zip de commit anterior: {e}")
         return None
 
     def escanean_y_calcular_diferencias(self, id_proyecto, ruta_proyecto):
+        """
+        Escanea recursivamente el directorio del proyecto, consulta en la base de datos
+        el ÚLTIMO commit individual de CADA archivo, y genera las diferencias exactas.
+        """
         if not ruta_proyecto or not os.path.exists(ruta_proyecto):
             return {"cambios": [], "diff_texto": "Ruta física del proyecto no encontrada."}
 
@@ -113,13 +158,13 @@ class ServicioVersionado:
             for file in files:
                 if file.startswith('.'): continue
                 
-                ruta_abs = os.path.join(root, file)
-                rel_path = os.path.relpath(ruta_abs, ruta_proyecto)
+                ruta_abs = os.path.normpath(os.path.join(root, file))
+                rel_path = os.path.normpath(os.path.relpath(ruta_abs, ruta_proyecto))
 
                 # Leer contenido en disco
                 try:
                     with open(ruta_abs, 'r', encoding='utf-8', errors='replace') as f:
-                        contenido_actual = f.read()
+                        contenido_actual = self.normalizar_texto(f.read())
                 except Exception:
                     continue
 
@@ -129,7 +174,14 @@ class ServicioVersionado:
                 
                 contenido_anterior = None
                 if version_previa:
-                    contenido_anterior = self.obtener_contenido_ultimo_commit(id_archivo, version_previa.contenido_comprimido)
+                    contenido_anterior = self.obtener_contenido_ultimo_commit(
+                        id_archivo=id_archivo,
+                        ruta_zip=version_previa.contenido_comprimido,
+                        nombre_archivo=file,
+                        ruta_relativa=rel_path,
+                        id_proyecto=id_proyecto,
+                        hash_version=version_previa.hash_version
+                    )
 
                 # Si el contenido actual es exactamente igual al anterior, NO hay cambios
                 if contenido_anterior is not None and contenido_actual == contenido_anterior:
@@ -140,7 +192,7 @@ class ServicioVersionado:
                     lineas_ant = []
                     # Archivo completamente nuevo
                     lineas_act = contenido_actual.splitlines(keepends=True)
-                    diff = [f"--- a/{file}\n", f"+++ b/{file}\n", f"@@ -0,0 +1,{len(lineas_act)} @@\n"]
+                    diff = [f"--- a/{rel_path}\n", f"+++ b/{rel_path}\n", f"@@ -0,0 +1,{len(lineas_act)} @@\n"]
                     diff.extend([f"+{line if line.endswith('\n') else line + '\n'}" for line in lineas_act])
                 else:
                     # Archivo modificado
@@ -151,8 +203,8 @@ class ServicioVersionado:
                     diff = list(difflib.unified_diff(
                         lineas_ant,
                         lineas_act,
-                        fromfile=f"a/{file}",
-                        tofile=f"b/{file}"
+                        fromfile=f"a/{rel_path}",
+                        tofile=f"b/{rel_path}"
                     ))
 
                 # Calcular Diff con difflib
