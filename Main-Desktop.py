@@ -366,7 +366,6 @@ class HU002_Registro(BaseFrame):
 class HU009_ListarRepositorios(BaseFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
-        self.build_nav()
         self.repos = []
         self.filtered_repos = []
         self.search_var = tk.StringVar()
