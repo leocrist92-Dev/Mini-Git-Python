@@ -274,8 +274,8 @@ class RepositoriosDAO:
         Retorna el id (PRIMARY KEY AUTO_INCREMENT) recién generado.
         """
         q = """
-            INSERT INTO etiquetas (id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama)
-            VALUES (%s, %s, %s, %s, %s, %s);
+            INSERT INTO etiquetas (id_usuario, hash_version, mensaje, descripcion, contenido_comprimido, id_rama, enviado)
+            VALUES (%s, %s, %s, %s, %s, %s, FALSE);
         """
         return self._ejecutar(q, (id_usuario, hash_version, mensaje, descripcion, ruta_zip, id_rama))
 
@@ -289,7 +289,7 @@ class RepositoriosDAO:
         """
         q = """
             SELECT e.id, e.id_usuario, e.hash_version, e.mensaje, e.descripcion,
-                   e.contenido_comprimido, e.fecha, e.id_rama, u.nombre AS autor, r.nombre AS rama
+                   e.contenido_comprimido, e.fecha, e.id_rama, e.enviado, u.nombre AS autor, r.nombre AS rama
             FROM etiquetas e
             INNER JOIN usuarios u ON e.id_usuario = u.id
             LEFT JOIN ramas r ON e.id_rama = r.id
@@ -312,6 +312,7 @@ class RepositoriosDAO:
                 e.descripcion,
                 e.fecha,
                 e.contenido_comprimido,
+                e.enviado,
                 u.nombre AS autor,
                 r.nombre AS rama,
                 GROUP_CONCAT(DISTINCT a.nombre SEPARATOR ', ') AS nombre_archivo
@@ -321,7 +322,7 @@ class RepositoriosDAO:
             INNER JOIN usuarios u ON e.id_usuario = u.id
             LEFT JOIN ramas r ON e.id_rama = r.id
             WHERE a.id_proyecto = %s
-            GROUP BY e.id, e.hash_version, e.mensaje, e.descripcion, e.fecha, e.contenido_comprimido, u.nombre, r.nombre
+            GROUP BY e.id, e.hash_version, e.mensaje, e.descripcion, e.fecha, e.contenido_comprimido, e.enviado, u.nombre, r.nombre
             ORDER BY e.fecha DESC;
         """
         return self._ejecutar(q, (id_proyecto,), fetch=True) or []
@@ -335,5 +336,13 @@ class RepositoriosDAO:
         """
         res = self._ejecutar(q, (id_proyecto, hash_ver), fetch=True)
         return len(res) > 0 if res else False
+
+    def marcar_commit_como_enviado(self, id_etiqueta):
+        """
+        Actualiza el estado del commit marcándolo como enviado al servidor.
+        """
+        q = "UPDATE etiqueta SET enviado = TRUE WHERE id = %s;"
+        return self._ejecutar(q, (id_etiqueta,))
+
 
     

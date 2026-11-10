@@ -103,3 +103,9 @@ class MiniGitFacade:
 
     def asignar_etiqueta_a_version(self, id_version, id_etiqueta):
         return self.srv_etiquetas.asignar_etiqueta_a_version(id_version, id_etiqueta)
+
+    def enviar_commit_al_servidor(self, id_etiqueta, id_proyecto):
+        """
+        Delega el envío del commit al servidor (Push).
+        """
+        return self.srv_versionado.enviar_commit_al_servidor(id_etiqueta, id_proyecto)

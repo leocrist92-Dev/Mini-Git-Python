@@ -238,13 +238,15 @@ class ServicioVersionado:
 
         rama_obj = self.dao.obtener_rama_activa(id_proyecto)
         id_rama = rama_obj.id
+        rama_nombre = rama_obj.nombre
 
         proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
         if not proyecto: raise Exception("Proyecto no válido.")
 
         ruta_completa = os.path.join(proyecto.ruta, proyecto.nombre)
-        
-        carpeta_commits = os.path.join(ruta_completa, ".commits")
+
+        # MODIFICACIÓN: Crear subcarpeta con el nombre de la rama dentro de .commits
+        carpeta_commits = os.path.join(ruta_completa, ".commits", rama_nombre)
         if not os.path.exists(carpeta_commits):
             os.makedirs(carpeta_commits)
 
@@ -471,3 +473,48 @@ class ServicioVersionado:
                 print(f"Error al resolver la ruta dinámica del ZIP: {e}")
 
         return None
+
+    def enviar_commit_al_servidor(self, id_etiqueta, id_proyecto):
+        """
+        Emula un 'git push' copiando el archivo ZIP del commit a una ruta de servidor
+        simulada (Ej. XAMPP) conservando la estructura de carpetas (.commits/rama/hash.zip).
+        """
+        etiqueta = self.dao.obtener_etiqueta_por_id(id_etiqueta)
+        proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
+
+        if not etiqueta or not proyecto:
+            raise Exception("No se encontraron los datos del commit o del proyecto.")
+        
+        if etiqueta.get('enviado'):
+            raise Exception("Este commit ya fue enviado al servidor previamente.")
+
+        ruta_local_zip = etiqueta.get('contenido_comprimido')
+        rama_nombre = etiqueta.get('rama', 'main')
+        nombre_proyecto = proyecto.nombre
+
+        if not ruta_local_zip or not os.path.exists(ruta_local_zip):
+            raise Exception("El archivo físico del commit no existe en el directorio local.")
+
+        # Definir la ruta del servidor emulado (Ej. XAMPP htdocs)
+        # Puedes cambiar esta ruta a donde tengas instalado tu servidor XAMPP, ej: 'C:/xampp/htdocs/minigit_server'
+        #ruta_servidor_base = "C:/xampp/htdocs/minigit_server"
+        ruta_servidor_base = "D:\Archivos Programación\Prueba_servidor_minigit"
+        
+        # Construir la estructura: minigit_server / Nombre_Proyecto / .commits / Rama
+        ruta_destino_dir = os.path.join(ruta_servidor_base, nombre_proyecto, ".commits", rama_nombre)
+        ruta_destino_dir = os.path.normpath(ruta_destino_dir)
+        
+        # Crear la estructura de carpetas en el servidor si no existe
+        os.makedirs(ruta_destino_dir, exist_ok=True)
+
+        ruta_destino_zip = os.path.join(ruta_destino_dir, os.path.basename(ruta_local_zip))
+
+        # Copiar el archivo al "servidor"
+        try:
+            shutil.copy2(ruta_local_zip, ruta_destino_zip)
+        except Exception as e:
+            raise Exception(f"Fallo al enviar el archivo al servidor emulado: {e}")
+
+        # Actualizar base de datos a enviado = True
+        self.dao.marcar_commit_como_enviado(id_etiqueta)
+        return True

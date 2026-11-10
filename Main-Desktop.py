@@ -1186,6 +1186,14 @@ class HU005_Historial(BaseFrame):
         self.meta_card = ttk.Frame(right_frame, style='Panel2.TFrame', padding=10)
         self.meta_card.pack(fill="x", pady=(0, 10))
 
+        # --- AÑADIDO: Contenedor para el estado del Servidor ---
+        self.estado_server_frame = ttk.Frame(self.meta_card, style='Panel2.TFrame')
+        self.estado_server_frame.pack(side="right", anchor="n")
+
+        self.lbl_enviado = ttk.Label(self.estado_server_frame, text="✅ Enviado al Servidor", font=("Segoe UI", 9, "bold"), foreground=self.controller.colors["ok"], background=self.controller.colors["panel_2"])
+        self.btn_enviar = ttk.Button(self.estado_server_frame, text="☁️ Enviar (Push)", style='Primary.TButton', command=self.enviar_al_servidor)
+        # -------------------------------------------------------
+
         self.lbl_hash = ttk.Label(self.meta_card, text="SHA-1: -", font=("Segoe UI", 10, "bold"), foreground=self.controller.colors["cyan"], background=self.controller.colors["panel_2"])
         self.lbl_hash.pack(anchor="w")
 
@@ -1238,7 +1246,8 @@ class HU005_Historial(BaseFrame):
                 msg = str(c.get('mensaje', ''))
                 autor = str(c.get('autor', ''))
                 hash_v = str(c.get('hash_version', ''))
-                rama = str(c.get('rama', 'main'))
+                rama = str(c.get('rama', ''))
+                enviado = c.get('enviado', 0)
             else:
                 msg = str(getattr(c, 'mensaje', ''))
                 autor = str(getattr(c, 'autor', ''))
@@ -1258,12 +1267,19 @@ class HU005_Historial(BaseFrame):
                 autor = str(c.get('autor', 'Desconocido'))
                 rama = str(c.get('rama', 'main'))
                 fecha = c.get('fecha')
+                enviado = c.get('enviado', 0)
             else:
                 hash_full = str(getattr(c, 'hash_version', ''))
                 msg = str(getattr(c, 'mensaje', 'Sin mensaje'))
                 autor = str(getattr(c, 'autor', 'Desconocido'))
                 rama = str(getattr(c, 'rama', 'main'))
                 fecha = getattr(c, 'fecha', None)
+
+            """match_text = (st in msg.lower()) or (st in autor.lower()) or (st in hash_v.lower())
+            match_branch = (selected_branch == "Todas") or (rama.lower() == selected_branch.lower())
+
+            if match_text and match_branch:
+                self.filtered_commits.append(c)"""
 
             hash_short = hash_full[:8] + "..." if len(hash_full) > 8 else hash_full
             f_str = formatear_fecha_relativa(fecha)
@@ -1293,6 +1309,16 @@ class HU005_Historial(BaseFrame):
             msg = commit.get('mensaje', '') if isinstance(commit, dict) else getattr(commit, 'mensaje', '')
             archivo = commit.get('nombre_archivo', 'archivo.py') if isinstance(commit, dict) else getattr(commit, 'nombre_archivo', 'archivo.py')
             zip_path = commit.get('contenido_comprimido', '') if isinstance(commit, dict) else getattr(commit, 'contenido_comprimido', '')
+
+            # --- AÑADIDO: Lógica visual del botón / etiqueta de envío ---
+            self.lbl_enviado.pack_forget()
+            self.btn_enviar.pack_forget()
+
+            if commit.get('enviado'):
+                self.lbl_enviado.pack()
+            else:
+                self.btn_enviar.pack()
+            # -------------------------------------------------------------
 
             # Actualizar panel de detalles a la derecha
             self.lbl_hash.config(text=f"SHA-1: {hash_f}")
@@ -1363,6 +1389,33 @@ class HU005_Historial(BaseFrame):
                     self.txt_diff.insert(tk.END, line, "context")
 
             self.txt_diff.config(state="disabled")
+
+    def enviar_al_servidor(self):
+        """Invoca la acción de push hacia el servidor simulado y recarga la UI."""
+        if not self.commit_seleccionado_id:
+            return
+            
+        repo = self.controller.proyecto_actual
+        if not repo:
+            return
+
+        r_id = repo.id if hasattr(repo, 'id') else repo.get('id', 1)
+
+        self.btn_enviar.config(text="☁️ Enviando...", state="disabled")
+        try:
+            exito = self.controller.facade.enviar_commit_al_servidor(self.commit_seleccionado_id, r_id)
+            if exito:
+                self.show_toast("✓ ¡Commit enviado al servidor con éxito!", "success")
+                # Actualizar el estado localmente para reflejarlo de inmediato sin consultar BD
+                for c in self.commits_datos:
+                    if c['id'] == self.commit_seleccionado_id:
+                        c['enviado'] = 1
+                self.apply_filters()
+                self.tree.selection_set(str(self.commit_seleccionado_id)) # Reseleccionar
+        except Exception as e:
+            self.show_toast(f"Error al enviar: {e}", "error")
+        finally:
+            self.btn_enviar.config(text="☁️ Enviar (Push)", state="normal")
 
 class HU006_Diff(BaseFrame):
     def __init__(self, parent, controller):
