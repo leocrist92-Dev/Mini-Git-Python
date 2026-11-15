@@ -104,8 +104,9 @@ class MiniGitFacade:
     def asignar_etiqueta_a_version(self, id_version, id_etiqueta):
         return self.srv_etiquetas.asignar_etiqueta_a_version(id_version, id_etiqueta)
 
-    def enviar_commit_al_servidor(self, id_etiqueta, id_proyecto):
+    def enviar_cambios_rama_al_servidor(self, id_proyecto, id_rama):
         """
-        Delega el envío del commit al servidor (Push).
+        NUEVO: Delega el envío de todos los commits pendientes de una rama
+        y la copia del worktree al servidor.
         """
-        return self.srv_versionado.enviar_commit_al_servidor(id_etiqueta, id_proyecto)
+        return self.srv_versionado.enviar_cambios_rama_al_servidor(id_proyecto, id_rama)

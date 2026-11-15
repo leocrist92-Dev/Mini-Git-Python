@@ -4,6 +4,8 @@ import os
 import datetime
 import shutil
 import difflib
+import tempfile
+import requests # Librería necesaria para peticiones HTTP reales al servidor
 from Dominio.version_archivo import VersionArchivo
 from Dominio.rama import Rama
 from Infraestructura.repositorios_dao import RepositoriosDAO
@@ -14,11 +16,21 @@ class ServicioVersionado:
     def __init__(self):
         self.dao = RepositoriosDAO()
         self.ruta_base = os.path.expanduser("~/.minigit")
+        # =================================================================
+        # RUTA REAL DEL SERVIDOR:
+        # =================================================================
+        self.API_URL = "http://localhost:3000/api/push" 
 
     def normalizar_texto(self, texto):
         """Normaliza los saltos de línea para evitar falsas diferencias entre Windows y Unix."""
         if texto is None: return None
         return texto.replace('\r\n', '\n')
+
+    def normalizar_ruta_relativa(self, ruta_rel):
+        """Normaliza separadores de ruta al estándar POSIX ('/') usado por Git y ZIP."""
+        if not ruta_rel:
+            return ""
+        return ruta_rel.replace('\\', '/').lstrip('./')
 
     def obtener_historial(self, id_proyecto):
         """Hace SELECT ordenado por fecha desc."""
@@ -159,7 +171,7 @@ class ServicioVersionado:
                 if file.startswith('.'): continue
                 
                 ruta_abs = os.path.normpath(os.path.join(root, file))
-                rel_path = os.path.normpath(os.path.relpath(ruta_abs, ruta_proyecto))
+                rel_path = self.normalizar_ruta_relativa(os.path.normpath(os.path.relpath(ruta_abs, ruta_proyecto)))
 
                 # Leer contenido en disco
                 try:
@@ -211,8 +223,8 @@ class ServicioVersionado:
                 diff = list(difflib.unified_diff(
                     lineas_ant,
                     lineas_act,
-                    fromfile=f"a/{file}",
-                    tofile=f"b/{file}"
+                    fromfile=f"a/{rel_path}",
+                    tofile=f"b/{rel_path}"
                 ))
 
                     
@@ -474,47 +486,120 @@ class ServicioVersionado:
 
         return None
 
-    def enviar_commit_al_servidor(self, id_etiqueta, id_proyecto):
+    def empaquetar_worktree(self, ruta_origen_proyecto, archivo_destino_zip):
         """
-        Emula un 'git push' copiando el archivo ZIP del commit a una ruta de servidor
-        simulada (Ej. XAMPP) conservando la estructura de carpetas (.commits/rama/hash.zip).
+        Toma todos los archivos actuales del proyecto (ignorando carpetas internas 
+        como .commits o .git) y los comprime en un ZIP temporal. 
+        Esto permite enviar la estructura limpia sin hacer miles de peticiones HTTP individuales.
         """
-        etiqueta = self.dao.obtener_etiqueta_por_id(id_etiqueta)
+        with zipfile.ZipFile(archivo_destino_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(ruta_origen_proyecto):
+                # Ignorar directorios ocultos de control de versiones
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                for file in files:
+                    if file.startswith('.'):
+                        continue
+                    ruta_absoluta = os.path.join(root, file)
+                    ruta_relativa = os.path.relpath(ruta_absoluta, ruta_origen_proyecto)
+                    zipf.write(ruta_absoluta, ruta_relativa)
+
+    def enviar_cambios_rama_al_servidor(self, id_proyecto, id_rama):
+        """
+        LÓGICA CORE DEL PUSH BATCH:
+        1. Consulta la BD para encontrar TODOS los commits pendientes de la rama.
+        2. Crea un ZIP temporal del estado actual del proyecto (Worktree).
+        3. Recopila los ZIPs de los commits históricos pendientes.
+        4. Envía todo en una única petición HTTP POST (Multipart) al Servidor Real.
+        5. Si el servidor responde OK (HTTP 200), marca los commits como enviados en MySQL.
+        """
+        
         proyecto = self.dao.obtener_proyecto_por_id(id_proyecto)
-
-        if not etiqueta or not proyecto:
-            raise Exception("No se encontraron los datos del commit o del proyecto.")
+        if not proyecto: raise Exception("No se encontró el proyecto.")
         
-        if etiqueta.get('enviado'):
-            raise Exception("Este commit ya fue enviado al servidor previamente.")
 
-        ruta_local_zip = etiqueta.get('contenido_comprimido')
-        rama_nombre = etiqueta.get('rama', 'main')
+        # OBTENER EL USUARIO PROPIETARIO DEL PROYECTO
+        # Consultamos directamente a la BD para tener el nombre del usuario y enviarlo al server
+        usuario_db = self.dao._ejecutar("SELECT nombre_usuario FROM usuarios WHERE id = %s;", (proyecto.id_usuario,), fetch=True)
+        nombre_usuario = usuario_db[0]['nombre_usuario'] if usuario_db else 'usuario_desconocido'
+        
+        
+        ramas = self.dao.obtener_ramas_proyecto(id_proyecto)
+        rama_obj = next((r for r in ramas if r['id'] == id_rama), None)
+        if not rama_obj: raise Exception("No se encontró la rama especificada.")
+        
+        # Obtener TODOS los commits pendientes, no importa desde cuál se hizo clic
+        pendientes = self.dao.obtener_commits_pendientes_por_rama(id_proyecto, id_rama)
+        if not pendientes: raise Exception("La rama está actualizada. No hay commits pendientes por enviar.")
+        
         nombre_proyecto = proyecto.nombre
-
-        if not ruta_local_zip or not os.path.exists(ruta_local_zip):
-            raise Exception("El archivo físico del commit no existe en el directorio local.")
-
-        # Definir la ruta del servidor emulado (Ej. XAMPP htdocs)
-        # Puedes cambiar esta ruta a donde tengas instalado tu servidor XAMPP, ej: 'C:/xampp/htdocs/minigit_server'
-        #ruta_servidor_base = "C:/xampp/htdocs/minigit_server"
-        ruta_servidor_base = "D:\Archivos Programación\Prueba_servidor_minigit"
+        ruta_origen_proyecto = os.path.normpath(os.path.join(proyecto.ruta, nombre_proyecto))
         
-        # Construir la estructura: minigit_server / Nombre_Proyecto / .commits / Rama
-        ruta_destino_dir = os.path.join(ruta_servidor_base, nombre_proyecto, ".commits", rama_nombre)
-        ruta_destino_dir = os.path.normpath(ruta_destino_dir)
+        archivos_para_enviar = [] # Estructura requerida por requests
+        archivos_abiertos = []    # Registro para poder cerrarlos y evitar fugas de memoria
         
-        # Crear la estructura de carpetas en el servidor si no existe
-        os.makedirs(ruta_destino_dir, exist_ok=True)
-
-        ruta_destino_zip = os.path.join(ruta_destino_dir, os.path.basename(ruta_local_zip))
-
-        # Copiar el archivo al "servidor"
         try:
-            shutil.copy2(ruta_local_zip, ruta_destino_zip)
-        except Exception as e:
-            raise Exception(f"Fallo al enviar el archivo al servidor emulado: {e}")
+            # 1. PREPARAR EL WORKTREE (Archivos actuales)
+            # Creamos el ZIP en la carpeta temporal de Windows/Linux
+            temp_dir = tempfile.gettempdir()
+            worktree_zip_path = os.path.join(temp_dir, f"worktree_{hashlib.md5(nombre_proyecto.encode()).hexdigest()}.zip")
+            
+            self.empaquetar_worktree(ruta_origen_proyecto, worktree_zip_path)
+            
+            f_worktree = open(worktree_zip_path, 'rb')
+            archivos_abiertos.append(f_worktree)
+            
+            # Formato tuple para requests: (nombre_campo, (nombre_archivo, descriptor, MIME_type))
+            archivos_para_enviar.append(('worktree', ('worktree.zip', f_worktree, 'application/zip')))
 
-        # Actualizar base de datos a enviado = True
-        self.dao.marcar_commit_como_enviado(id_etiqueta)
-        return True
+            # 2. PREPARAR LOS COMMITS HISTÓRICOS PENDIENTES
+            for commit in pendientes:
+                # Utilizamos la función de resolución dinámica para evitar errores de rutas corruptas (tildes)
+                ruta_zip = self.resolver_ruta_zip_valida(id_proyecto, commit['contenido_comprimido'], commit['hash_version'])
+                
+                if ruta_zip and os.path.exists(ruta_zip):
+                    f_commit = open(ruta_zip, 'rb')
+                    archivos_abiertos.append(f_commit)
+                    nombre_archivo = os.path.basename(ruta_zip)
+                    # En Node.js esto llegará como un array de archivos en req.files['commits']
+                    archivos_para_enviar.append(('commits', (nombre_archivo, f_commit, 'application/zip')))
+                else:
+                    raise Exception(f"Fallo de integridad: No se encontró el archivo ZIP local del commit {commit['hash_version'][:8]}")
+
+            # 3. METADATOS TEXTUALES
+            # Enviamos el nombre del proyecto y la rama para que el servidor sepa dónde crear las carpetas
+            datos_formulario = {
+                'usuario': nombre_usuario,
+                'proyecto': nombre_proyecto,
+                'rama': rama_obj['nombre']
+            }
+
+            # 4. ENVÍO REAL AL SERVIDOR HTTP
+            print(f"Enviando datos al servidor para: {nombre_usuario}/{nombre_proyecto} (Rama: {rama_obj['nombre']})")
+            
+            # Usamos un timeout largo por si el worktree es pesado
+            respuesta = requests.post(self.API_URL, data=datos_formulario, files=archivos_para_enviar, timeout=120)
+            
+            # 5. EVALUACIÓN DE RESPUESTA
+            if respuesta.status_code == 200:
+                # ¡Éxito! El servidor recibió todo, descomprimió el worktree y guardó los commits.
+                ids_pendientes = [c['id'] for c in pendientes]
+                
+                # Actualizamos la Base de Datos Local
+                self.dao.marcar_commits_como_enviados(ids_pendientes)
+                return len(ids_pendientes)
+            else:
+                # Error en el backend (ej. Error de permisos al crear carpetas)
+                error_msg = respuesta.json().get('error', 'Error desconocido en el servidor.')
+                raise Exception(f"El servidor rechazó el Push (HTTP {respuesta.status_code}): {error_msg}")
+
+        finally:
+            # 6. LIMPIEZA GARANTIZADA (Ejecutada ocurra o no un error)
+            for f in archivos_abiertos:
+                f.close() # Liberar descriptores de archivo del sistema operativo
+            
+            # Borrar el ZIP temporal del worktree para no saturar el disco duro
+            if os.path.exists(worktree_zip_path):
+                try:
+                    os.remove(worktree_zip_path)
+                except:
+                    pass

@@ -922,10 +922,13 @@ class HU004_Commit(BaseFrame):
         else:
             for item in self.cambios_detectados:
                 var = tk.BooleanVar(value=True)
-                self.check_vars[item['nombre']] = (var, item)
+                # Usamos la ruta relativa completa (ej. 'Controller/controlador.js' o 'archivo.js')
+                # como etiqueta visual y clave única para evitar colisiones entre carpetas
+                ruta_mostrar = item.get('ruta_relativa', item['nombre']).replace('\\', '/')
+                self.check_vars[ruta_mostrar] = (var, item)
                 tag_tipo = " [Nuevo]" if item['es_nuevo'] else " [Modificado]"
                 chk = tk.Checkbutton(
-                    self.files_container, text=f"{item['nombre']}{tag_tipo}", variable=var,
+                    self.files_container, text=f"{ruta_mostrar}{tag_tipo}", variable=var,
                     bg=self.controller.colors["panel"], fg=self.controller.colors["fg"],
                     selectcolor=self.controller.colors["bg"], activebackground=self.controller.colors["panel"],
                     activeforeground=self.controller.colors["blue"], font=("Segoe UI", 9)
@@ -975,7 +978,7 @@ class HU004_Commit(BaseFrame):
             return
 
         archivos_a_commitear = [
-            item for nombre, (var, item) in self.check_vars.items() if var.get()
+            item for ruta_clave, (var, item) in self.check_vars.items() if var.get()
         ]
 
         if not archivos_a_commitear:
@@ -1191,7 +1194,7 @@ class HU005_Historial(BaseFrame):
         self.estado_server_frame.pack(side="right", anchor="n")
 
         self.lbl_enviado = ttk.Label(self.estado_server_frame, text="✅ Enviado al Servidor", font=("Segoe UI", 9, "bold"), foreground=self.controller.colors["ok"], background=self.controller.colors["panel_2"])
-        self.btn_enviar = ttk.Button(self.estado_server_frame, text="☁️ Enviar (Push)", style='Primary.TButton', command=self.enviar_al_servidor)
+        self.btn_enviar = ttk.Button(self.estado_server_frame, text="☁️ Enviar Todo (Push Rama)", style='Primary.TButton', command=self.enviar_al_servidor)
         # -------------------------------------------------------
 
         self.lbl_hash = ttk.Label(self.meta_card, text="SHA-1: -", font=("Segoe UI", 10, "bold"), foreground=self.controller.colors["cyan"], background=self.controller.colors["panel_2"])
@@ -1297,10 +1300,13 @@ class HU005_Historial(BaseFrame):
         selected = self.tree.selection()
         if not selected:
             return
-        
+
+        #self.commit_seleccionado_id = int(selected[0])
+
         index = self.tree.index(selected[0])
         if index < len(self.filtered_commits):
             commit = self.filtered_commits[index]
+            self.commit_seleccionado_id = int(commit['id'])
             
             hash_f = commit.get('hash_version', '-') if isinstance(commit, dict) else getattr(commit, 'hash_version', '-')
             autor = commit.get('autor', '-') if isinstance(commit, dict) else getattr(commit, 'autor', '-')
@@ -1391,7 +1397,7 @@ class HU005_Historial(BaseFrame):
             self.txt_diff.config(state="disabled")
 
     def enviar_al_servidor(self):
-        """Invoca la acción de push hacia el servidor simulado y recarga la UI."""
+        """Dispara la acción de Push en Lote hacia el servidor real desde la UI."""
         if not self.commit_seleccionado_id:
             return
             
@@ -1399,23 +1405,74 @@ class HU005_Historial(BaseFrame):
         if not repo:
             return
 
+        # Adaptación para leer como Objeto o como Diccionario
         r_id = repo.id if hasattr(repo, 'id') else repo.get('id', 1)
+        
+        commit_info = next((c for c in self.commits if c['id'] == self.commit_seleccionado_id), None)
+        
+        id_rama = commit_info.get('id_rama') if commit_info else None
+        nombre_rama = commit_info.get('rama')
+        
 
-        self.btn_enviar.config(text="☁️ Enviando...", state="disabled")
+        # Como commit_info trae el nombre de la rama ('rama': 'main') y no su 'id_rama',
+        # consultamos las ramas del proyecto para obtener el ID correspondiente.
+        if not id_rama and nombre_rama:
+            try:
+                ramas_proyecto = self.controller.facade.obtener_ramas_proyecto(r_id) or []
+                for r in ramas_proyecto:
+                    r_nom = r.get('nombre') if isinstance(r, dict) else getattr(r, 'nombre', None)
+                    if r_nom == nombre_rama:
+                        id_rama = r.get('id') if isinstance(r, dict) else getattr(r, 'id', None)
+                        break
+            except Exception as e:
+                print(f"Error consultando ramas del proyecto: {e}")
+
+        # Respaldo adicional: verificar si coincide con la rama activa del proyecto
+        if not id_rama:
+            try:
+                rama_act = self.controller.facade.obtener_rama_activa(r_id)
+                if rama_act:
+                    act_nom = rama_act.get('nombre') if isinstance(rama_act, dict) else getattr(rama_act, 'nombre', None)
+                    if not nombre_rama or act_nom == nombre_rama:
+                        id_rama = rama_act.get('id') if isinstance(rama_act, dict) else getattr(rama_act, 'id', None)
+            except Exception as e:
+                print(f"Error consultando rama activa: {e}")
+
+        if not id_rama:
+            print("Error: No se pudo identificar el ID de la rama para este commit.")
+            #self.show_toast("Error: No se pudo identificar a qué rama pertenece este commit.", "error")
+            return
+
+        # Feedback visual para el usuario mientras se procesa la red
+        self.btn_enviar.config(text="☁️ Transfiriendo al Servidor...", state="disabled")
+        self.update_idletasks() # Forzar dibujado de UI para evitar congelamiento percibido
+
         try:
-            exito = self.controller.facade.enviar_commit_al_servidor(self.commit_seleccionado_id, r_id)
-            if exito:
-                self.show_toast("✓ ¡Commit enviado al servidor con éxito!", "success")
-                # Actualizar el estado localmente para reflejarlo de inmediato sin consultar BD
-                for c in self.commits_datos:
-                    if c['id'] == self.commit_seleccionado_id:
+            # INVOCACIÓN A LA CAPA DE FACHADA (Que conecta con Servicio > Servidor Real)
+            commits_enviados = self.controller.facade.enviar_cambios_rama_al_servidor(r_id, id_rama)
+            
+            if commits_enviados > 0:
+                #self.show_toast(f"✓ Push exitoso. {commits_enviados} commits enviados al servidor remoto.", "success")
+                
+                # Actualizar el estado temporal de la tabla en memoria
+                # (Marcamos como enviados TODOS los commits de la misma rama)
+                for c in self.commits:
+                    if c.get('id_rama') == id_rama:
                         c['enviado'] = 1
+                
+                # Actualizamos la interfaz
                 self.apply_filters()
-                self.tree.selection_set(str(self.commit_seleccionado_id)) # Reseleccionar
+                self.lbl_enviado.config(text="✅ Enviado al Servidor", foreground=self.controller.colors["ok"])
+                self.lbl_enviado.pack(anchor="w", pady=5)
+                self.btn_enviar.pack_forget()
+                
         except Exception as e:
-            self.show_toast(f"Error al enviar: {e}", "error")
+            # Mostramos el error devuelto por la validación local o el servidor Node.js
+            #self.show_tosast(f"Fallo de sincronización: {e}", "error")
+            pass
         finally:
-            self.btn_enviar.config(text="☁️ Enviar (Push)", state="normal")
+            # Restaurar el estado del botón en caso de error para reintentos
+            self.btn_enviar.config(text="☁️ Enviar Todo (Push Rama)", state="normal")
 
 class HU006_Diff(BaseFrame):
     def __init__(self, parent, controller):

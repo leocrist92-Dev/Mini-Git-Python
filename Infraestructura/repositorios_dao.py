@@ -126,14 +126,19 @@ class RepositoriosDAO:
         return self._ejecutar(q_ins, (nombre_cat, f"Archivos tipo {ext}", ext))
 
     def obtener_o_crear_archivo(self, id_proyecto, nombre_archivo, ruta_relativa):
-        q_sel = "SELECT * FROM archivos WHERE id_proyecto = %s AND nombre = %s;"
-        res = self._ejecutar(q_sel, (id_proyecto, nombre_archivo), fetch=True)
+        """
+        Busca o registra un archivo diferenciándolo por su ruta relativa completa
+        (ej. 'Controller/controlador.js' vs 'Views/controlador.js') para evitar colisiones.
+        """
+        ruta_norm = (ruta_relativa or nombre_archivo).replace('\\', '/')
+        q_sel = "SELECT * FROM archivos WHERE id_proyecto = %s AND ruta_relativa = %s;"
+        res = self._ejecutar(q_sel, (id_proyecto, ruta_norm), fetch=True)
         if res:
             return res[0]['id']
         ext = os.path.splitext(nombre_archivo)[1]
         id_tipo = self.obtener_o_crear_tipo_archivo(ext)
         q_ins = "INSERT INTO archivos (id_proyecto, id_tipo, nombre, ruta_relativa) VALUES (%s, %s, %s, %s);"
-        return self._ejecutar(q_ins, (id_proyecto, id_tipo, nombre_archivo, ruta_relativa))
+        return self._ejecutar(q_ins, (id_proyecto, id_tipo, nombre_archivo, ruta_norm))
 
     def obtener_archivos_por_proyecto(self, id_proyecto):
         q = "SELECT * FROM archivos WHERE id_proyecto = %s;"
@@ -192,9 +197,10 @@ class RepositoriosDAO:
         return None
 
     # --- Archivos ---
-    def insertar_archivo(self, id_proyecto, id_tipo, nombre):
-        q = "INSERT INTO archivos (id_proyecto, id_tipo, nombre) VALUES (%s, %s, %s);"
-        return self._ejecutar(q, (id_proyecto, id_tipo, nombre))
+    def insertar_archivo(self, id_proyecto, id_tipo, nombre, ruta_relativa=None):
+        ruta_norm = (ruta_relativa or nombre).replace('\\', '/')
+        q = "INSERT INTO archivos (id_proyecto, id_tipo, nombre, ruta_relativa) VALUES (%s, %s, %s);"
+        return self._ejecutar(q, (id_proyecto, id_tipo, nombre, ruta_norm))
 
     def obtener_archivos_por_proyecto(self, id_proyecto):
         q = "SELECT * FROM archivos WHERE id_proyecto = %s;"
@@ -337,12 +343,39 @@ class RepositoriosDAO:
         res = self._ejecutar(q, (id_proyecto, hash_ver), fetch=True)
         return len(res) > 0 if res else False
 
-    def marcar_commit_como_enviado(self, id_etiqueta):
-        """
-        Actualiza el estado del commit marcándolo como enviado al servidor.
-        """
-        q = "UPDATE etiqueta SET enviado = TRUE WHERE id = %s;"
-        return self._ejecutar(q, (id_etiqueta,))
-
-
+    # ==========================================
+    # NUEVOS MÉTODOS PARA SINCRONIZACIÓN (PUSH)
+    # ==========================================
     
+    def obtener_commits_pendientes_por_rama(self, id_proyecto, id_rama):
+        """
+        Retorna TODOS los commits que no han sido enviados al servidor (enviado = FALSE)
+        pertenecientes a una rama específica. 
+        Se ordenan por fecha ascendente (el más viejo primero) para mantener 
+        la integridad de la línea de tiempo al enviar al servidor.
+        """
+        q = """
+            SELECT e.id, e.contenido_comprimido, e.hash_version
+            FROM etiquetas e
+            INNER JOIN versiones_archivo va ON e.id = va.id_etiqueta
+            INNER JOIN archivos a ON va.id_archivo = a.id
+            WHERE a.id_proyecto = %s AND e.id_rama = %s AND e.enviado = FALSE
+            GROUP BY e.id, e.contenido_comprimido, e.hash_version
+            ORDER BY e.fecha ASC;
+        """
+        return self._ejecutar(q, (id_proyecto, id_rama), fetch=True) or []
+
+    def marcar_commits_como_enviados(self, lista_ids):
+        """
+        Actualiza el estado de los commits en la base de datos a enviado = TRUE.
+        Recibe una lista de IDs de la tabla etiqueta.
+        """
+        if not lista_ids:
+            return False
+            
+        # Genera una cadena de marcadores de posición dinámicos: %s, %s, %s
+        format_strings = ','.join(['%s'] * len(lista_ids))
+        q = f"UPDATE etiquetas SET enviado = TRUE WHERE id IN ({format_strings});"
+        
+        # Ejecuta la consulta pasando la lista de IDs como una tupla
+        return self._ejecutar(q, tuple(lista_ids))
