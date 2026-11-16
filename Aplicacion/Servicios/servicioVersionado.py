@@ -204,6 +204,7 @@ class ServicioVersionado:
                     lineas_ant = []
                     # Archivo completamente nuevo
                     lineas_act = contenido_actual.splitlines(keepends=True)
+                    lineas_act[-1] += "\n\n"
                     diff = [f"--- a/{rel_path}\n", f"+++ b/{rel_path}\n", f"@@ -0,0 +1,{len(lineas_act)} @@\n"]
                     diff.extend([f"+{line if line.endswith('\n') else line + '\n'}" for line in lineas_act])
                 else:

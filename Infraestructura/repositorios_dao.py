@@ -135,6 +135,7 @@ class RepositoriosDAO:
         res = self._ejecutar(q_sel, (id_proyecto, ruta_norm), fetch=True)
         if res:
             return res[0]['id']
+        
         ext = os.path.splitext(nombre_archivo)[1]
         id_tipo = self.obtener_o_crear_tipo_archivo(ext)
         q_ins = "INSERT INTO archivos (id_proyecto, id_tipo, nombre, ruta_relativa) VALUES (%s, %s, %s, %s);"

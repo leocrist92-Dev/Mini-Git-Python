@@ -931,11 +931,29 @@ class HU004_Commit(BaseFrame):
                     self.files_container, text=f"{ruta_mostrar}{tag_tipo}", variable=var,
                     bg=self.controller.colors["panel"], fg=self.controller.colors["fg"],
                     selectcolor=self.controller.colors["bg"], activebackground=self.controller.colors["panel"],
-                    activeforeground=self.controller.colors["blue"], font=("Segoe UI", 9)
+                    activeforeground=self.controller.colors["blue"], font=("Segoe UI", 9),
+                    command=self.actualizar_diff_seleccionado
                 )
                 chk.pack(anchor="w", pady=2)
 
-        # Insertar diff formateado línea por línea
+        self._renderizar_texto_diff(diff_texto)
+    
+    def actualizar_diff_seleccionado(self):
+        """Recalcula el Diff mostrado y guardado según los archivos marcados en Staging."""
+        bloques_diff = []
+        for ruta_clave, (var, item) in self.check_vars.items():
+            if var.get() and item.get('diff_archivo'):
+                bloques_diff.append(item['diff_archivo'])
+                bloques_diff.append("\n")
+
+        self.diff_texto_actual = "".join(bloques_diff) if bloques_diff else "No hay archivos seleccionados para el commit."
+        self._renderizar_texto_diff(self.diff_texto_actual)
+
+    def _renderizar_texto_diff(self, diff_texto):
+        """Aplica formato y colores sintácticos al visor Diff en HU004_Commit."""
+        self.txt_diff.config(state="normal")
+        self.txt_diff.delete("1.0", tk.END)
+
         for line in diff_texto.splitlines(keepends=True):
             if line.startswith("---") or line.startswith("+++") or line.startswith("@@"):
                 self.txt_diff.insert(tk.END, line, "blue")
@@ -1078,11 +1096,6 @@ class HU005_Historial(BaseFrame):
         autores_unicos_n = len(set(c['autor'] for c in self.commits if 'autor' in c and c['autor']))
         #autores_unicos = list(c['autor'] for c in self.commits if 'autor' in c and c['autor'] and c not in autores_unicos)
         ult_fecha = self.commits[0]['fecha'] if self.commits else None
-        
-        stats = [("Total Commits", "345", self.controller.colors["blue"]), 
-                 ("Autores", "4", self.controller.colors["purple"]), 
-                 ("Días Activos", "120", self.controller.colors["ok"]), 
-                 ("Líneas Modificadas", "+4.5k / -1.2k", self.controller.colors["warn"])]
 
         stats = [
             ("Total Commits", str(len(self.commits)), self.controller.colors["blue"]),
