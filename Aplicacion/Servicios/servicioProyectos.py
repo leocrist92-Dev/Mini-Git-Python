@@ -82,3 +82,6 @@ class ServicioProyectos:
             return max(conteo, key=conteo.get)
 
         return "General"
+
+    def actualizar_ruta_proyecto(self, id_proyecto, nueva_ruta):
+        return self.dao.actualizar_ruta_proyecto(id_proyecto, nueva_ruta)

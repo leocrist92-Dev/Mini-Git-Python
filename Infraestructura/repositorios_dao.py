@@ -113,6 +113,15 @@ class RepositoriosDAO:
             return Proyecto(p['id'], p['id_usuario'], p['nombre'], p['descripcion'], p['ruta'], p['visibilidad'], p['fecha_creacion'])
         return None
 
+    def actualizar_ruta_proyecto(self, id_proyecto, nueva_ruta):
+        """
+        Actualiza la ruta física local asociada a un proyecto en la base de datos.
+        Útil cuando un repositorio fue creado desde la versión Web (sin ruta)
+        y se vincula por primera vez en la aplicación de escritorio.
+        """
+        q = "UPDATE proyectos SET ruta = %s WHERE id = %s;"
+        return self._ejecutar(q, (nueva_ruta, id_proyecto))
+
     #Funciones para insertar commits
     def obtener_o_crear_tipo_archivo(self, extension):
         ext = extension.lower().strip()

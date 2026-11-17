@@ -39,6 +39,10 @@ class MiniGitFacade:
     def eliminar_proyecto(self, id_proyecto):
         return self.srv_proyectos.eliminar_proyecto(id_proyecto)
 
+    def actualizar_ruta_proyecto(self, id_proyecto, nueva_ruta):
+        """Actualiza la ruta física local de un proyecto creado sin ruta (ej. desde la versión Web)."""
+        return self.srv_proyectos.actualizar_ruta_proyecto(id_proyecto, nueva_ruta)
+
     # --- Puntos de Acceso UI : Archivos ---
     def agregar_archivos_a_proyecto(self, id_proyecto, lista_rutas):
         return self.srv_archivos.agregar_archivos_a_proyecto(id_proyecto, lista_rutas)

@@ -71,6 +71,95 @@ class MainApp(tk.Tk):
     def set_proyecto_actual(self, proyecto):
             self.proyecto_actual = proyecto
 
+    def verificar_y_configurar_ruta(self, repo):
+        """
+        Verifica si el proyecto tiene una ruta local válida en este equipo.
+        Si fue creado desde la versión Web (ruta vacía/None) o la carpeta no existe,
+        muestra un mensaje informativo y abre una ventana para seleccionar la ruta del proyecto.
+        Retorna True si el proyecto queda con una ruta local válida, o False si el usuario cancela.
+        """
+        if not repo:
+            return False
+
+        r_id = repo.get("id") if isinstance(repo, dict) else getattr(repo, "id", None)
+        r_nombre = repo.get("nombre") if isinstance(repo, dict) else getattr(repo, "nombre", "Proyecto")
+        ruta_actual = repo.get("ruta") if isinstance(repo, dict) else getattr(repo, "ruta", None)
+
+        ruta_str = str(ruta_actual).strip() if ruta_actual is not None else ""
+        tiene_ruta_bd = bool(ruta_str) and ruta_str.lower() not in ("none", "null")
+        ruta_completa_actual = os.path.join(ruta_str, r_nombre) if tiene_ruta_bd else ""
+
+        # Si ya tiene ruta en BD y existe físicamente en el disco duro de este equipo
+        if tiene_ruta_bd and os.path.exists(ruta_completa_actual):
+            return True
+
+        # Preparar mensaje explicativo según el motivo (creado en Web sin ruta o ruta de otro PC)
+        if not tiene_ruta_bd:
+            mensaje_dialogo = (
+                f"Este proyecto ('{r_nombre}') no tiene una ruta local asignada "
+                f"(probablemente fue creado desde la versión Web).\n\n"
+                f"Por favor, agrega una carpeta local en tu equipo para trabajar con sus archivos y commits.\n\n"
+                f"¿Deseas seleccionar la carpeta ahora?"
+            )
+            titulo_dialogo = "Proyecto sin ruta local"
+        else:
+            mensaje_dialogo = (
+                f"La ruta registrada para el proyecto '{r_nombre}' no existe en este equipo:\n"
+                f"{ruta_completa_actual}\n\n"
+                f"Por favor, selecciona una carpeta local para vincular el proyecto.\n\n"
+                f"¿Deseas seleccionar la carpeta ahora?"
+            )
+            titulo_dialogo = "Ruta local no encontrada"
+
+        aceptar = messagebox.askokcancel(titulo_dialogo, mensaje_dialogo, parent=self)
+        if not aceptar:
+            return False
+
+        carpeta_seleccionada = filedialog.askdirectory(
+            title=f"Seleccionar ruta local para el proyecto '{r_nombre}'",
+            parent=self
+        )
+        if not carpeta_seleccionada:
+            return False
+
+        carpeta_norm = os.path.normpath(carpeta_seleccionada)
+
+        # Evitar duplicar el nombre de la carpeta si el usuario eligió directamente '.../<r_nombre>'
+        if os.path.basename(carpeta_norm).lower() == r_nombre.lower():
+            ruta_base = os.path.dirname(carpeta_norm)
+            ruta_final_proyecto = carpeta_norm
+        else:
+            ruta_base = carpeta_norm
+            ruta_final_proyecto = os.path.join(carpeta_norm, r_nombre)
+
+        try:
+            # Crear la carpeta del proyecto y la estructura base de commits si no existen
+            os.makedirs(ruta_final_proyecto, exist_ok=True)
+            os.makedirs(os.path.join(ruta_final_proyecto, ".commits", "main"), exist_ok=True)
+
+            # Guardar la ruta base en MySQL
+            self.facade.actualizar_ruta_proyecto(r_id, ruta_base)
+
+            # Actualizar el objeto/diccionario del proyecto en memoria
+            if isinstance(repo, dict):
+                repo["ruta"] = ruta_base
+            else:
+                repo.ruta = ruta_base
+
+            messagebox.showinfo(
+                "Ruta asignada con éxito",
+                f"Se ha vinculado el proyecto '{r_nombre}' a la ruta:\n{ruta_final_proyecto}",
+                parent=self
+            )
+            return True
+        except Exception as e:
+            messagebox.showerror(
+                "Error al guardar ruta",
+                f"No se pudo vincular la ruta del proyecto:\n{e}",
+                parent=self
+            )
+            return False
+
     def setup_styles(self):
         style = ttk.Style()
         style.theme_use('clam')
@@ -521,6 +610,9 @@ class HU009_ListarRepositorios(BaseFrame):
             date = repo.fecha_creacion
             ruta = repo.ruta
 
+            ruta_str = str(ruta).strip() if ruta is not None else ""
+            tiene_ruta = bool(ruta_str) and ruta_str.lower() not in ("none", "null") and os.path.exists(os.path.join(ruta_str, name))
+
             # Consultas a Facade
             lenguaje = self.controller.facade.obtener_lenguaje_proyecto(r_id, ruta)
             u_fecha = self.controller.facade.obtener_ultima_actualizacion(r_id, date)
@@ -566,6 +658,24 @@ class HU009_ListarRepositorios(BaseFrame):
                 background=self.controller.colors["panel"],
             ).pack(side="left")
 
+            # Indicador visual de estado de ruta local (Web vs Vinculado)
+            if tiene_ruta:
+                ttk.Label(
+                    details,
+                    text=f"📁 {os.path.join(ruta_str, name)}",
+                    font=("Segoe UI", 8),
+                    foreground=self.controller.colors["ok"],
+                    background=self.controller.colors["panel"],
+                ).pack(side="left")
+            else:
+                ttk.Label(
+                    details,
+                    text="⚠️ Sin ruta local (creado en Web - selecciona una acción para vincular)",
+                    font=("Segoe UI", 8, "bold"),
+                    foreground=self.controller.colors["warn"],
+                    background=self.controller.colors["panel"],
+                ).pack(side="left")
+
     def build_table(self):
         for widget in self.table_frame.winfo_children():
             widget.destroy()
@@ -588,17 +698,19 @@ class HU009_ListarRepositorios(BaseFrame):
             ).pack(pady=30)
             return
             
-        columns = ("nombre", "visibilidad", "lenguaje", "actualizado")
+        columns = ("nombre", "visibilidad", "lenguaje", "ruta_estado", "actualizado")
         tree = ttk.Treeview(self.table_frame, columns=columns, show="headings", height=8)
         
         tree.heading("nombre", text="Nombre")
         tree.heading("visibilidad", text="Visibilidad")
         tree.heading("lenguaje", text="Lenguaje")
+        tree.heading("ruta_estado", text="Ruta Local")
         tree.heading("actualizado", text="Última Actualización")
         
         tree.column("nombre", width=200)
         tree.column("visibilidad", width=100)
         tree.column("lenguaje", width=120)
+        tree.column("ruta_estado", width=240)
         tree.column("actualizado", width=180)
         
         #for repo in self.repos:
@@ -608,12 +720,16 @@ class HU009_ListarRepositorios(BaseFrame):
             visibilidad = repo.visibilidad
             ruta = repo.ruta
             f_creacion = repo.fecha_creacion
+
+            ruta_str = str(ruta).strip() if ruta is not None else ""
+            tiene_ruta = bool(ruta_str) and ruta_str.lower() not in ("none", "null") and os.path.exists(os.path.join(ruta_str, nombre))
+            ruta_disp = os.path.join(ruta_str, nombre) if tiene_ruta else "⚠️ Sin ruta local (Web)"
             
             lenguaje = self.controller.facade.obtener_lenguaje_proyecto(r_id, ruta)
             u_fecha = self.controller.facade.obtener_ultima_actualizacion(r_id, f_creacion)
             u_fecha_str = formatear_fecha_relativa(u_fecha)
             
-            tree.insert("", "end", values=(nombre, visibilidad, lenguaje, u_fecha_str))
+            tree.insert("", "end", values=(nombre, visibilidad, lenguaje, ruta_disp, u_fecha_str))
             
         tree.pack(fill="both", expand=True)
 
@@ -626,27 +742,42 @@ class HU009_ListarRepositorios(BaseFrame):
         self.table_frame.pack(fill="both", expand=True)
 
     def ir_a_crear_commit(self, repo):
+        """Verifica que el proyecto tenga ruta local antes de abrir la vista de crear commit."""
+        if not self.controller.verificar_y_configurar_ruta(repo):
+            return
         """Asigna el repositorio seleccionado al controlador y abre la vista de crear commit."""
         self.controller.set_proyecto_actual(repo)
         #self.show_toast(f"Proyecto seleccionado: {repo.nombre}", "info")
         self.controller.show_frame("HU004_Commit")
 
     def ir_a_historial(self, repo):
+        """Verifica que el proyecto tenga ruta local antes de abrir la vista de crear commit."""
+        if not self.controller.verificar_y_configurar_ruta(repo):
+            return
         """Asigna el repositorio seleccionado al controlador y abre la vista de historial."""
         self.controller.set_proyecto_actual(repo)
         self.controller.show_frame("HU005_Historial")
 
     def ir_a_diff(self, repo):
+        """Verifica que el proyecto tenga ruta local antes de abrir la vista de crear commit."""
+        if not self.controller.verificar_y_configurar_ruta(repo):
+            return
         """Asigna el repositorio seleccionado al controlador y abre la vista de historial."""
         self.controller.set_proyecto_actual(repo)
         self.controller.show_frame("HU006_Diff")
 
     def ir_a_ramas(self, repo):
+        """Verifica que el proyecto tenga ruta local antes de abrir la vista de crear commit."""
+        if not self.controller.verificar_y_configurar_ruta(repo):
+            return
         """Asigna el repositorio seleccionado al controlador y abre la vista de ramas."""
         self.controller.set_proyecto_actual(repo)
         self.controller.show_frame("HU007_Ramas")
 
     def ir_a_eliminar_repo(self, repo):
+        """Verifica que el proyecto tenga ruta local antes de abrir la vista de crear commit."""
+        if not self.controller.verificar_y_configurar_ruta(repo):
+            return
         """Confirma y elimina un repositorio de la base de datos y disco."""
         self.controller.set_proyecto_actual(repo)
         self.controller.show_frame("HU010_EliminarRepo")
@@ -701,8 +832,8 @@ class HU003_CrearRepo(BaseFrame):
         
         # Opciones de Privacidad
         ttk.Label(box, text="Privacidad", font=("Segoe UI", 10, "bold"), background=self.controller.colors["panel"], foreground=self.controller.colors["text"]).pack(anchor="w")
-        self.priv_var = tk.StringVar(value="Público")
-        ttk.Radiobutton(box, text="Público (Cualquiera en internet puede ver este repositorio)", variable=self.priv_var, value="Público", style='TRadiobutton').pack(anchor="w", pady=2)
+        self.priv_var = tk.StringVar(value="PUblico")
+        ttk.Radiobutton(box, text="Público (Cualquiera en internet puede ver este repositorio)", variable=self.priv_var, value="Publico", style='TRadiobutton').pack(anchor="w", pady=2)
         ttk.Radiobutton(box, text="Privado (Tú eliges quién puede ver y hacer commits)", variable=self.priv_var, value="Privado", style='TRadiobutton').pack(anchor="w", pady=(2, 15))
         
         # Inicialización (Checkboxes)
